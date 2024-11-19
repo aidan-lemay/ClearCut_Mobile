@@ -58,7 +58,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Clearcut Mobile'),
+        title: Text('Systems'),
         leading: Builder(
           builder: (context) => IconButton(
             icon: Icon(Icons.menu),
@@ -75,7 +75,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
                 color: Theme.of(context).colorScheme.primary,
               ),
               child: Text(
-                'Navigation',
+                'Clearcut Mobile',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onPrimary,
                   fontSize: 24,
@@ -116,22 +116,40 @@ class MyAppState extends ChangeNotifier {
   var favorites = <dynamic>[]; // List of favorites
 
   MyAppState() {
-    fetchApiData(); // Automatically fetch data on initialization
+    fetchSystems(); // Automatically fetch data on initialization
   }
 
-  Future<void> fetchApiData() async {
+  Future<void> fetchSystems() async {
     try {
       final response =
           await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
 
       if (response.statusCode == 200) {
         apiData = json.decode(response.body);
-        notifyListeners(); // Notify listeners to rebuild widgets
+        notifyListeners();
       } else {
         throw Exception('Failed to load data');
       }
     } catch (error) {
       print('Error fetching API data: $error');
+    }
+  }
+
+  Future<List<dynamic>> fetchTalkgroups(String systemId) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+            'https://clearcutradio.app/api/v1/talkgroups?system=$systemId'),
+      );
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        throw Exception('Failed to load talkgroups');
+      }
+    } catch (error) {
+      print('Error fetching talkgroups: $error');
+      rethrow;
     }
   }
 
@@ -150,16 +168,6 @@ class SystemsPage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          RichText(
-            text: TextSpan(
-              text: 'Systems',
-              style: DefaultTextStyle.of(context).style.copyWith(
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-            ),
-          ),
           if (appState.apiData != null)
             ...appState.apiData!.map((x) {
               return Padding(
@@ -174,6 +182,12 @@ class SystemsPage extends StatelessWidget {
                   title: Text(x['name']),
                   onTap: () {
                     appState.setCurrent(x);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TalkgroupsPage(),
+                      ),
+                    );
                   },
                 ),
               );
@@ -207,18 +221,148 @@ class FavoritesPage extends StatelessWidget {
   }
 }
 
-class TalkgroupsPage extends StatelessWidget {
+class TalkgroupsPage extends StatefulWidget {
+  @override
+  _TalkgroupsPageState createState() => _TalkgroupsPageState();
+}
+
+class _TalkgroupsPageState extends State<TalkgroupsPage> {
+  Map<int, bool> selectedTalkgroups = {}; // Tracks selected talkgroups
+
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<MyAppState>();
+    var system = appState.current;
 
-    return ListView(
-      children: appState.current.map((x) {
-        return ListTile(
-          leading: Icon(Icons.favorite),
-          title: Text(x['name']),
-        );
-      }).toList(),
+    if (system == null || system is! Map || !system.containsKey('id')) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text('Talkgroups'),
+        ),
+        body: Center(
+          child: Text('No system selected.'),
+        ),
+      );
+    }
+
+    return FutureBuilder(
+      future: appState.fetchTalkgroups(system['id']),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text('Talkgroups'),
+            ),
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        } else if (snapshot.hasError) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text('Talkgroups'),
+            ),
+            body: Center(
+              child: Text('Error loading talkgroups.'),
+            ),
+          );
+        } else {
+          var talkgroups = snapshot.data as List;
+
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(system['name']),
+            ),
+            body: ListView.builder(
+              itemCount: talkgroups.length,
+              itemBuilder: (context, index) {
+                var talkgroup = talkgroups[index];
+                bool isSelected = selectedTalkgroups[talkgroup['id']] ?? false;
+
+                return Column(
+                  children: [
+                    ListTile(
+                      leading: Checkbox(
+                        value: isSelected,
+                        onChanged: (bool? newValue) {
+                          setState(() {
+                            selectedTalkgroups[talkgroup['id']] =
+                                newValue ?? false;
+                          });
+                        },
+                      ),
+                      title: Text(talkgroup['name']),
+                      subtitle:
+                          Text(talkgroup['description'] ?? 'No description'),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ListenerPage(
+                              selectedTalkgroups: [talkgroup],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    Divider(),
+                  ],
+                );
+              },
+            ),
+            floatingActionButton: selectedTalkgroups.containsValue(true)
+                ? FloatingActionButton.extended(
+                    onPressed: () {
+                      var selectedItems = talkgroups
+                          .where((tg) => selectedTalkgroups[tg['id']] ?? false);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ListenerPage(
+                            selectedTalkgroups: selectedItems.toList(),
+                          ),
+                        ),
+                      );
+                    },
+                    label: Text('Listen to Selected'),
+                    icon: Icon(Icons.play_arrow),
+                  )
+                : null,
+          );
+        }
+      },
+    );
+  }
+}
+
+class ListenerPage extends StatelessWidget {
+  final List<dynamic> selectedTalkgroups;
+
+  ListenerPage({required this.selectedTalkgroups});
+
+  @override
+  Widget build(BuildContext context) {
+    final talkgroupNames =
+        selectedTalkgroups.map((tg) => tg['name']).join(', ');
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Listener'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              talkgroupNames.isNotEmpty
+                  ? "Selected Talkgroups: $talkgroupNames"
+                  : 'No talkgroups selected.',
+              style: TextStyle(fontSize: 14),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
