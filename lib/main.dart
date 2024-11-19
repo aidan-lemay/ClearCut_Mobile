@@ -35,7 +35,6 @@ class MyApp extends StatelessWidget {
             title: 'Clearcut Mobile',
             themeMode: ThemeMode.dark,
             theme: ThemeData(
-              // Remove brightness from here
               colorScheme: ColorScheme.fromSeed(
                 seedColor: Colors.greenAccent,
                 brightness: Brightness.dark,
@@ -43,7 +42,6 @@ class MyApp extends StatelessWidget {
               textTheme: ThemeData.light().textTheme,
             ),
             darkTheme: ThemeData(
-              // Remove brightness from here as well
               colorScheme: ColorScheme.fromSeed(
                 seedColor: Colors.greenAccent,
                 brightness: Brightness.dark,
@@ -115,8 +113,8 @@ class MyAppState extends ChangeNotifier {
 
     if (!alreadyExists) {
       favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
-      saveFavorites(); // Save favorites after adding
-      notifyListeners(); // Notify listeners to update UI
+      saveFavorites();
+      notifyListeners();
     } else {
       print('This favorite already exists.');
     }
@@ -126,8 +124,8 @@ class MyAppState extends ChangeNotifier {
     favorites.removeWhere((favorite) =>
         favorite['systemId'] == systemId &&
         ListEquality().equals(favorite['talkgroups'], talkgroups));
-    saveFavorites(); // Save favorites after removing
-    notifyListeners(); // Notify listeners to update UI
+    saveFavorites();
+    notifyListeners();
   }
 
   Future<void> saveFavorites() async {
@@ -146,7 +144,7 @@ class MyAppState extends ChangeNotifier {
       final favoritesJson = prefs.getString('favorites');
       if (favoritesJson != null) {
         favorites = List<Map<String, dynamic>>.from(jsonDecode(favoritesJson));
-        notifyListeners(); // Notify listeners when favorites are loaded
+        notifyListeners();
       }
     } catch (error) {
       print('Error loading favorites: $error');
@@ -470,7 +468,7 @@ class _ListenerPageState extends State<ListenerPage> {
 
   void startAutoRefresh() {
     _refreshTimer = Timer.periodic(Duration(seconds: 5), (timer) {
-      fetchCalls(); // Refresh calls every 30 seconds
+      fetchCalls();
     });
   }
 
@@ -488,7 +486,6 @@ class _ListenerPageState extends State<ListenerPage> {
   Future<void> fetchTranscript(String callId) async {
     try {
       setState(() {
-        // Mark the specific call as loading
         final index = callData!.indexWhere((call) => call['id'] == callId);
         if (index != -1) {
           callData![index]['isFetchingTranscript'] = true;
@@ -641,7 +638,7 @@ class _ListenerPageState extends State<ListenerPage> {
                                 Text(
                                   call['startTime'] != null
                                       ? formatTimestamp(call['startTime'])
-                                      : 'Loading...', // Placeholder text if the timestamp is null
+                                      : 'Loading...',
                                   style: TextStyle(
                                       fontSize: 12, color: Colors.grey),
                                 ),
@@ -650,7 +647,7 @@ class _ListenerPageState extends State<ListenerPage> {
                                   call['startTime'] != null
                                       ? getDuration(
                                           call['startTime'], call['endTime'])
-                                      : 'Loading...', // Placeholder text if the timestamp is null
+                                      : 'Loading...',
                                   style: TextStyle(
                                       fontSize: 12, color: Colors.grey),
                                 ),
@@ -667,8 +664,7 @@ class _ListenerPageState extends State<ListenerPage> {
                                 icon: Icon(Icons.edit, color: Colors.orange),
                                 onPressed: () {
                                   if (call['id'] != null) {
-                                    fetchTranscript(call['id']
-                                        .toString()); // Ensure it's a string
+                                    fetchTranscript(call['id'].toString());
                                   } else {
                                     print('Error: call ID is null');
                                   }
