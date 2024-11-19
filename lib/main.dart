@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:audioplayers/audioplayers.dart';
+import 'package:collection/collection.dart';
 
 /* Clearcut API Paths:
+Audio: https://audio.clearcutradio.app/audio/us-ny-monroe/1077/us-ny-monroe-1077-1732038152.m4a
 URL: https://clearcutradio.app
 Systems: /api/v1/systems
 Talkgroups: /api/v1/talkgroups?system=[SYSTEM NAME]
@@ -111,12 +114,12 @@ class _MySystemsPageState extends State<MySystemsPage> {
 }
 
 class MyAppState extends ChangeNotifier {
-  dynamic current; // Typing can be specific if the API structure is known
-  List<dynamic>? apiData; // Holds the API data
-  var favorites = <dynamic>[]; // List of favorites
+  dynamic current; // Current system or talkgroup context
+  List<dynamic>? apiData; // List of systems from API
+  var favorites = <Map<String, dynamic>>[]; // Favorite talkgroup groups
 
   MyAppState() {
-    fetchSystems(); // Automatically fetch data on initialization
+    fetchSystems();
   }
 
   Future<void> fetchSystems() async {
@@ -154,8 +157,20 @@ class MyAppState extends ChangeNotifier {
   }
 
   void setCurrent(dynamic item) {
-    current = item; // Update 'current'
-    notifyListeners(); // Notify listeners about the change
+    current = item;
+    notifyListeners();
+  }
+
+  void addFavorite(String systemId, List<dynamic> talkgroups) {
+    favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
+    notifyListeners();
+  }
+
+  void removeFavorite(String systemId, List<dynamic> talkgroups) {
+    favorites.removeWhere((favorite) =>
+        favorite['systemId'] == systemId &&
+        ListEquality().equals(favorite['talkgroups'], talkgroups));
+    notifyListeners();
   }
 }
 
@@ -195,28 +210,6 @@ class SystemsPage extends StatelessWidget {
           if (appState.apiData == null) CircularProgressIndicator(),
         ],
       ),
-    );
-  }
-}
-
-class FavoritesPage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    var appState = context.watch<MyAppState>();
-
-    if (appState.favorites.isEmpty) {
-      return Center(
-        child: Text('No favorites yet.'),
-      );
-    }
-
-    return ListView(
-      children: appState.favorites.map((item) {
-        return ListTile(
-          leading: Icon(Icons.favorite),
-          title: Text(item['name']),
-        );
-      }).toList(),
     );
   }
 }
@@ -415,14 +408,20 @@ class ListenerPage extends StatefulWidget {
 }
 
 class _ListenerPageState extends State<ListenerPage> {
-  List<dynamic>? callData; // Holds the fetched call data
-  bool isLoading = true; // Tracks loading state
-  String? errorMessage; // Tracks error messages
+  List<dynamic>? callData;
+  bool isLoading = true;
+  String? errorMessage;
+  String transcriptQuery = '';
+
+  void initializeAudioPlayer() {
+    _audioPlayer = AudioPlayer();
+  }
 
   @override
   void initState() {
     super.initState();
     fetchCalls();
+    initializeAudioPlayer();
   }
 
   Future<void> fetchCalls() async {
@@ -431,14 +430,10 @@ class _ListenerPageState extends State<ListenerPage> {
       final talkgroupIds =
           widget.selectedTalkgroups.map((tg) => tg['id']).join(',');
 
-      final url = widget.selectedTalkgroups.length == 1
-          ? 'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds'
-          : 'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds';
+      final url =
+          'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds';
 
       final response = await http.get(Uri.parse(url));
-
-      print(widget.currentSystem);
-      print(widget.selectedTalkgroups);
 
       if (response.statusCode == 200) {
         setState(() {
@@ -469,6 +464,19 @@ class _ListenerPageState extends State<ListenerPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Listener'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.favorite),
+            onPressed: () {
+              var appState = context.read<MyAppState>();
+              appState.addFavorite(
+                  widget.currentSystem, widget.selectedTalkgroups);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Added to favorites!')),
+              );
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -478,6 +486,20 @@ class _ListenerPageState extends State<ListenerPage> {
             Text(
               "Selected Talkgroups: $talkgroupNames",
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              decoration: InputDecoration(
+                labelText: 'Search Transcripts',
+                hintText: 'Enter keyword',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  transcriptQuery = value;
+                });
+              },
             ),
             SizedBox(height: 16),
             if (isLoading) ...[
@@ -498,26 +520,25 @@ class _ListenerPageState extends State<ListenerPage> {
                       orElse: () => {'name': 'Unknown Talkgroup'},
                     )['name'];
 
+                    if (!transcript
+                        .toLowerCase()
+                        .contains(transcriptQuery.toLowerCase())) {
+                      return SizedBox.shrink();
+                    }
+
                     return Card(
                       margin: EdgeInsets.symmetric(vertical: 8),
                       child: ListTile(
-                        title: Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            talkgroupName,
-                            style: TextStyle(
-                                fontSize: 12, fontWeight: FontWeight.bold),
-                          ),
+                        title: Text(
+                          talkgroupName,
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold),
                         ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              transcript,
-                              style: TextStyle(fontSize: 14),
-                            ),
+                            Text(transcript, style: TextStyle(fontSize: 14)),
                             SizedBox(height: 10),
-                            // Timestamp at the bottom
                             Text(
                               formatTimestamp(call['startTime']),
                               style:
@@ -539,20 +560,74 @@ class _ListenerPageState extends State<ListenerPage> {
             ] else ...[
               Center(child: Text('No calls available.')),
             ],
-            Center(
-              child: ElevatedButton(
-                onPressed: () {},
-                child: Text('Favorite This View'),
-              ),
-            ),
           ],
         ),
       ),
     );
   }
 
-  void playAudio(String audioFile) {
-    // Placeholder: Integrate an audio player package to play the audio file
-    print('Playing audio: $audioFile');
+  late AudioPlayer _audioPlayer;
+
+  void playAudio(String audioFile) async {
+    final baseUrl = 'https://audio.clearcutradio.app/';
+
+    // Clean up the audioFile path if it starts with 'audio/'
+    if (audioFile.startsWith('audio/')) {
+      audioFile = audioFile.replaceFirst('audio/', '');
+    }
+
+    final fullUrl = Uri.parse('$baseUrl$audioFile');
+
+    try {
+      print('Playing audio from: $fullUrl');
+      await _audioPlayer.play(UrlSource(fullUrl.toString())); // Use UrlSource
+      print('Playing audio successfully.');
+    } catch (error) {
+      print('Error playing audio: $error');
+    }
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+}
+
+class FavoritesPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    var appState = context.watch<MyAppState>();
+
+    if (appState.favorites.isEmpty) {
+      return Center(
+        child: Text('No favorites yet.'),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: appState.favorites.length,
+      itemBuilder: (context, index) {
+        final favorite = appState.favorites[index];
+        final talkgroupNames =
+            favorite['talkgroups'].map((tg) => tg['name']).join(', ');
+
+        return ListTile(
+          leading: Icon(Icons.favorite),
+          title: Text(talkgroupNames),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ListenerPage(
+                  selectedTalkgroups: favorite['talkgroups'],
+                  currentSystem: favorite['systemId'],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }
