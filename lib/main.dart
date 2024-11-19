@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:collection/collection.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/us-ny-monroe/1077/us-ny-monroe-1077-1732038152.m4a
@@ -54,6 +56,112 @@ class MyApp extends StatelessWidget {
       ),
     );
   }
+}
+
+class MyAppState extends ChangeNotifier {
+  dynamic current;
+  List<dynamic>? apiData;
+  var favorites = <Map<String, dynamic>>[];
+
+  MyAppState() {
+    fetchSystems();
+    loadFavorites();
+  }
+
+  Future<void> fetchSystems() async {
+    try {
+      final response =
+          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
+
+      if (response.statusCode == 200) {
+        apiData = json.decode(response.body);
+        notifyListeners();
+      } else {
+        throw Exception('Failed to load data');
+      }
+    } catch (error) {
+      print('Error fetching API data: $error');
+    }
+  }
+
+  Future<List<dynamic>> fetchTalkgroups(String systemId) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+            'https://clearcutradio.app/api/v1/talkgroups?system=$systemId'),
+      );
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      } else {
+        throw Exception('Failed to load talkgroups');
+      }
+    } catch (error) {
+      print('Error fetching talkgroups: $error');
+      rethrow;
+    }
+  }
+
+  void setCurrent(dynamic item) {
+    current = item;
+    notifyListeners();
+  }
+
+  void addFavorite(String systemId, List<dynamic> talkgroups) {
+    bool alreadyExists = favorites.any((favorite) {
+      return favorite['systemId'] == systemId &&
+          ListEquality().equals(favorite['talkgroups'], talkgroups);
+    });
+
+    if (!alreadyExists) {
+      favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
+      notifyListeners();
+    } else {
+      print('This favorite already exists.');
+    }
+  }
+
+  void removeFavorite(String systemId, List<dynamic> talkgroups) {
+    favorites.removeWhere((favorite) =>
+        favorite['systemId'] == systemId &&
+        ListEquality().equals(favorite['talkgroups'], talkgroups));
+    notifyListeners();
+  }
+
+  Future<void> saveFavorites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final favoritesJson = jsonEncode(favorites);
+      await prefs.setString('favorites', favoritesJson);
+    } catch (error) {
+      print('Error saving favorites: $error');
+    }
+  }
+
+  Future<void> loadFavorites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final favoritesJson = prefs.getString('favorites');
+      if (favoritesJson != null) {
+        favorites = List<Map<String, dynamic>>.from(jsonDecode(favoritesJson));
+        notifyListeners();
+      }
+    } catch (error) {
+      print('Error loading favorites: $error');
+    }
+  }
+
+  // @override
+  // void addFavorite(String systemId, List<dynamic> talkgroups) {
+  //   super.addFavorite(systemId, talkgroups);
+  //   saveFavorites(); // Save to persistent storage
+  // }
+
+  // @override
+  // void removeFavorite(String systemId, List<dynamic> talkgroups) {
+  //   super.removeFavorite(systemId, talkgroups);
+  //   saveFavorites(); // Save to persistent storage
+  // }
 }
 
 class MySystemsPage extends StatefulWidget {
@@ -127,76 +235,6 @@ class _MySystemsPageState extends State<MySystemsPage> {
       ),
       body: page,
     );
-  }
-}
-
-class MyAppState extends ChangeNotifier {
-  dynamic current;
-  List<dynamic>? apiData;
-  var favorites = <Map<String, dynamic>>[];
-
-  MyAppState() {
-    fetchSystems();
-  }
-
-  Future<void> fetchSystems() async {
-    try {
-      final response =
-          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
-
-      if (response.statusCode == 200) {
-        apiData = json.decode(response.body);
-        notifyListeners();
-      } else {
-        throw Exception('Failed to load data');
-      }
-    } catch (error) {
-      print('Error fetching API data: $error');
-    }
-  }
-
-  Future<List<dynamic>> fetchTalkgroups(String systemId) async {
-    try {
-      final response = await http.get(
-        Uri.parse(
-            'https://clearcutradio.app/api/v1/talkgroups?system=$systemId'),
-      );
-
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      } else {
-        throw Exception('Failed to load talkgroups');
-      }
-    } catch (error) {
-      print('Error fetching talkgroups: $error');
-      rethrow;
-    }
-  }
-
-  void setCurrent(dynamic item) {
-    current = item;
-    notifyListeners();
-  }
-
-  void addFavorite(String systemId, List<dynamic> talkgroups) {
-    bool alreadyExists = favorites.any((favorite) {
-      return favorite['systemId'] == systemId &&
-          ListEquality().equals(favorite['talkgroups'], talkgroups);
-    });
-
-    if (!alreadyExists) {
-      favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
-      notifyListeners();
-    } else {
-      print('This favorite already exists.');
-    }
-  }
-
-  void removeFavorite(String systemId, List<dynamic> talkgroups) {
-    favorites.removeWhere((favorite) =>
-        favorite['systemId'] == systemId &&
-        ListEquality().equals(favorite['talkgroups'], talkgroups));
-    notifyListeners();
   }
 }
 
@@ -430,16 +468,71 @@ class _ListenerPageState extends State<ListenerPage> {
   bool isLoading = true;
   String? errorMessage;
   String transcriptQuery = '';
-
-  void initializeAudioPlayer() {
-    _audioPlayer = AudioPlayer();
-  }
+  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     fetchCalls();
     initializeAudioPlayer();
+    startAutoRefresh();
+  }
+
+  void startAutoRefresh() {
+    _refreshTimer = Timer.periodic(Duration(seconds: 5), (timer) {
+      fetchCalls(); // Refresh calls every 30 seconds
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  void initializeAudioPlayer() {
+    _audioPlayer = AudioPlayer();
+  }
+
+  Future<void> fetchTranscript(String callId) async {
+    try {
+      setState(() {
+        // Mark the specific call as loading
+        final index = callData!.indexWhere((call) => call['id'] == callId);
+        if (index != -1) {
+          callData![index]['isFetchingTranscript'] = true;
+        }
+      });
+
+      final response = await http.post(
+        Uri.parse(
+            'https://clearcutradio.app/api/v1/calls/transcribe?id=$callId'),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          final updatedCall = json.decode(response.body);
+          final index = callData!.indexWhere((call) => call['id'] == callId);
+          if (index != -1) {
+            callData![index] = updatedCall;
+          }
+        });
+      } else {
+        print('Failed to fetch transcript: ${response.statusCode}');
+      }
+    } catch (error) {
+      print('Error fetching transcript: $error');
+    } finally {
+      setState(() {
+        final index = callData!.indexWhere((call) => call['id'] == callId);
+        if (index != -1) {
+          callData![index].remove('isFetchingTranscript');
+        }
+      });
+
+      await fetchCalls();
+    }
   }
 
   Future<void> fetchCalls() async {
@@ -517,7 +610,9 @@ class _ListenerPageState extends State<ListenerPage> {
                   itemCount: callData!.length,
                   itemBuilder: (context, index) {
                     final call = callData![index];
-                    final transcript = call['transcript']['text'] ?? '';
+                    final transcript = call['transcript'] != null
+                        ? call['transcript']['text'] ?? ''
+                        : '';
 
                     final talkgroupName = widget.selectedTalkgroups.firstWhere(
                       (tg) => tg['id'] == call['talkgroup'],
@@ -541,20 +636,43 @@ class _ListenerPageState extends State<ListenerPage> {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(transcript, style: TextStyle(fontSize: 14)),
+                            if (call['isFetchingTranscript'] == true)
+                              Center(child: CircularProgressIndicator())
+                            else
+                              Text(transcript, style: TextStyle(fontSize: 14)),
                             SizedBox(height: 10),
                             Text(
-                              formatTimestamp(call['startTime']),
+                              call['startTime'] != null
+                                  ? formatTimestamp(call['startTime'])
+                                  : 'Loading...', // Placeholder text if the timestamp is null
                               style:
                                   TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ],
                         ),
-                        trailing: IconButton(
-                          icon: Icon(Icons.play_arrow),
-                          onPressed: () {
-                            playAudio(call['audioFile']);
-                          },
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (call['transcript'] == null &&
+                                call['isFetchingTranscript'] != true)
+                              IconButton(
+                                icon: Icon(Icons.edit, color: Colors.orange),
+                                onPressed: () {
+                                  if (call['id'] != null) {
+                                    fetchTranscript(call['id']
+                                        .toString()); // Ensure it's a string
+                                  } else {
+                                    print('Error: call ID is null');
+                                  }
+                                },
+                              ),
+                            IconButton(
+                              icon: Icon(Icons.play_arrow),
+                              onPressed: () {
+                                playAudio(call['audioFile']);
+                              },
+                            ),
+                          ],
                         ),
                       ),
                     );
@@ -586,7 +704,7 @@ class _ListenerPageState extends State<ListenerPage> {
   late AudioPlayer _audioPlayer;
 
   void playAudio(String audioFile) async {
-    final baseUrl = 'https://audio.clearcutradio.app/';
+    const baseUrl = 'https://audio.clearcutradio.app/';
 
     if (audioFile.startsWith('audio/')) {
       audioFile = audioFile.replaceFirst('audio/', '');
@@ -601,12 +719,6 @@ class _ListenerPageState extends State<ListenerPage> {
     } catch (error) {
       print('Error playing audio: $error');
     }
-  }
-
-  @override
-  void dispose() {
-    _audioPlayer.dispose();
-    super.dispose();
   }
 }
 

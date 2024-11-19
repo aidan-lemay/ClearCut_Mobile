@@ -14,6 +14,7 @@ dependencies:
   http: ^1.0.0
   audioplayers: ^6.1.0
   collection: ^1.17.0
+  shared_preferences: ^2.0.15
 
   english_words: ^4.0.0
   provider: ^6.0.0
