@@ -115,7 +115,8 @@ class MyAppState extends ChangeNotifier {
 
     if (!alreadyExists) {
       favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
-      notifyListeners();
+      saveFavorites(); // Save favorites after adding
+      notifyListeners(); // Notify listeners to update UI
     } else {
       print('This favorite already exists.');
     }
@@ -125,7 +126,8 @@ class MyAppState extends ChangeNotifier {
     favorites.removeWhere((favorite) =>
         favorite['systemId'] == systemId &&
         ListEquality().equals(favorite['talkgroups'], talkgroups));
-    notifyListeners();
+    saveFavorites(); // Save favorites after removing
+    notifyListeners(); // Notify listeners to update UI
   }
 
   Future<void> saveFavorites() async {
@@ -144,24 +146,12 @@ class MyAppState extends ChangeNotifier {
       final favoritesJson = prefs.getString('favorites');
       if (favoritesJson != null) {
         favorites = List<Map<String, dynamic>>.from(jsonDecode(favoritesJson));
-        notifyListeners();
+        notifyListeners(); // Notify listeners when favorites are loaded
       }
     } catch (error) {
       print('Error loading favorites: $error');
     }
   }
-
-  // @override
-  // void addFavorite(String systemId, List<dynamic> talkgroups) {
-  //   super.addFavorite(systemId, talkgroups);
-  //   saveFavorites(); // Save to persistent storage
-  // }
-
-  // @override
-  // void removeFavorite(String systemId, List<dynamic> talkgroups) {
-  //   super.removeFavorite(systemId, talkgroups);
-  //   saveFavorites(); // Save to persistent storage
-  // }
 }
 
 class MySystemsPage extends StatefulWidget {
