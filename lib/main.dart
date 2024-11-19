@@ -562,6 +562,11 @@ class _ListenerPageState extends State<ListenerPage> {
       return '${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
     }
 
+    String getDuration(int startTime, int endTime) {
+      int duration = endTime - startTime;
+      return '$duration Sec.';
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Stream'),
@@ -631,12 +636,25 @@ class _ListenerPageState extends State<ListenerPage> {
                             else
                               Text(transcript, style: TextStyle(fontSize: 14)),
                             SizedBox(height: 10),
-                            Text(
-                              call['startTime'] != null
-                                  ? formatTimestamp(call['startTime'])
-                                  : 'Loading...', // Placeholder text if the timestamp is null
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey),
+                            Row(
+                              children: [
+                                Text(
+                                  call['startTime'] != null
+                                      ? formatTimestamp(call['startTime'])
+                                      : 'Loading...', // Placeholder text if the timestamp is null
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                                Text(" | "),
+                                Text(
+                                  call['startTime'] != null
+                                      ? getDuration(
+                                          call['startTime'], call['endTime'])
+                                      : 'Loading...', // Placeholder text if the timestamp is null
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                              ],
                             ),
                           ],
                         ),
