@@ -539,6 +539,12 @@ class _ListenerPageState extends State<ListenerPage> {
             ] else ...[
               Center(child: Text('No calls available.')),
             ],
+            Center(
+              child: ElevatedButton(
+                onPressed: () {},
+                child: Text('Favorite This View'),
+              ),
+            ),
           ],
         ),
       ),
