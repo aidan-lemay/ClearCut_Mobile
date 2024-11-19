@@ -227,7 +227,10 @@ class TalkgroupsPage extends StatefulWidget {
 }
 
 class _TalkgroupsPageState extends State<TalkgroupsPage> {
-  Map<int, bool> selectedTalkgroups = {}; // Tracks selected talkgroups
+  String searchQuery = ''; // Store the search query
+  bool filterTranscribed = false; // Store the filter state
+  Map<int, bool> selectedTalkgroups = {}; // Track selected talkgroups
+  String currentSystem = "";
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +248,9 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
       );
     }
 
-    return FutureBuilder(
+    currentSystem = system['id'];
+
+    return FutureBuilder<List<dynamic>>(
       future: appState.fetchTalkgroups(system['id']),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -253,81 +258,145 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
             appBar: AppBar(
               title: Text('Talkgroups'),
             ),
-            body: Center(
-              child: CircularProgressIndicator(),
-            ),
+            body: Center(child: CircularProgressIndicator()),
           );
         } else if (snapshot.hasError) {
           return Scaffold(
             appBar: AppBar(
               title: Text('Talkgroups'),
             ),
-            body: Center(
-              child: Text('Error loading talkgroups.'),
-            ),
+            body: Center(child: Text('Error loading talkgroups.')),
           );
         } else {
-          var talkgroups = snapshot.data as List;
+          var talkgroups = snapshot.data ?? [];
+
+          // Filter talkgroups based on search query and "transcribed" filter
+          var filteredTalkgroups = talkgroups.where((tg) {
+            final matchesQuery = tg['name']
+                    .toString()
+                    .toLowerCase()
+                    .contains(searchQuery.toLowerCase()) ||
+                tg['description']
+                    .toString()
+                    .toLowerCase()
+                    .contains(searchQuery.toLowerCase()) ||
+                tg['id']
+                    .toString()
+                    .toLowerCase()
+                    .contains(searchQuery.toLowerCase());
+            final matchesTranscribed =
+                !filterTranscribed || (tg['transcribe'] == true);
+            return matchesQuery && matchesTranscribed;
+          }).toList();
 
           return Scaffold(
             appBar: AppBar(
               title: Text(system['name']),
             ),
-            body: ListView.builder(
-              itemCount: talkgroups.length,
-              itemBuilder: (context, index) {
-                var talkgroup = talkgroups[index];
-                bool isSelected = selectedTalkgroups[talkgroup['id']] ?? false;
+            body: Column(
+              children: [
+                // Search Bar
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      labelText: 'Search Talkgroups',
+                      hintText: 'Enter name, description, or ID',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        searchQuery = value;
+                      });
+                    },
+                  ),
+                ),
 
-                return Column(
-                  children: [
-                    ListTile(
-                      leading: Checkbox(
-                        value: isSelected,
-                        onChanged: (bool? newValue) {
+                // Transcription Filter
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Show only transcribed talkgroups'),
+                      Switch(
+                        value: filterTranscribed,
+                        onChanged: (value) {
                           setState(() {
-                            selectedTalkgroups[talkgroup['id']] =
-                                newValue ?? false;
+                            filterTranscribed = value;
                           });
                         },
                       ),
-                      title: Text(talkgroup['name']),
-                      subtitle:
-                          Text(talkgroup['description'] ?? 'No description'),
-                      onTap: () {
+                    ],
+                  ),
+                ),
+
+                // Talkgroup List
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: filteredTalkgroups.length,
+                    itemBuilder: (context, index) {
+                      var talkgroup = filteredTalkgroups[index];
+                      var isSelected =
+                          selectedTalkgroups[talkgroup['id']] ?? false;
+
+                      return ListTile(
+                        leading: Checkbox(
+                          value: isSelected,
+                          onChanged: (bool? newValue) {
+                            setState(() {
+                              selectedTalkgroups[talkgroup['id']] =
+                                  newValue ?? false;
+                            });
+                          },
+                        ),
+                        title: Text(talkgroup['name']),
+                        subtitle:
+                            Text(talkgroup['description'] ?? 'No description'),
+                        trailing: talkgroup['transcribe'] == true
+                            ? Icon(Icons.check_circle, color: Colors.green)
+                            : null,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ListenerPage(
+                                selectedTalkgroups: [talkgroup],
+                                currentSystem: currentSystem,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                // Listen to Selected Button
+                if (selectedTalkgroups.values.any((isSelected) => isSelected))
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        var selected = filteredTalkgroups
+                            .where((tg) => selectedTalkgroups[tg['id']] == true)
+                            .toList();
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => ListenerPage(
-                              selectedTalkgroups: [talkgroup],
+                              selectedTalkgroups: selected,
+                              currentSystem: currentSystem,
                             ),
                           ),
                         );
                       },
+                      child: Text('Listen to Selected'),
                     ),
-                    Divider(),
-                  ],
-                );
-              },
+                  ),
+              ],
             ),
-            floatingActionButton: selectedTalkgroups.containsValue(true)
-                ? FloatingActionButton.extended(
-                    onPressed: () {
-                      var selectedItems = talkgroups
-                          .where((tg) => selectedTalkgroups[tg['id']] ?? false);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ListenerPage(
-                            selectedTalkgroups: selectedItems.toList(),
-                          ),
-                        ),
-                      );
-                    },
-                    label: Text('Listen to Selected'),
-                    icon: Icon(Icons.play_arrow),
-                  )
-                : null,
           );
         }
       },
@@ -335,15 +404,67 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
   }
 }
 
-class ListenerPage extends StatelessWidget {
+class ListenerPage extends StatefulWidget {
   final List<dynamic> selectedTalkgroups;
+  final String currentSystem;
 
-  ListenerPage({required this.selectedTalkgroups});
+  ListenerPage({required this.selectedTalkgroups, required this.currentSystem});
+
+  @override
+  _ListenerPageState createState() => _ListenerPageState();
+}
+
+class _ListenerPageState extends State<ListenerPage> {
+  List<dynamic>? callData; // Holds the fetched call data
+  bool isLoading = true; // Tracks loading state
+  String? errorMessage; // Tracks error messages
+
+  @override
+  void initState() {
+    super.initState();
+    fetchCalls();
+  }
+
+  Future<void> fetchCalls() async {
+    try {
+      final systemId = widget.currentSystem;
+      final talkgroupIds =
+          widget.selectedTalkgroups.map((tg) => tg['id']).join(',');
+
+      final url = widget.selectedTalkgroups.length == 1
+          ? 'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds'
+          : 'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds';
+
+      final response = await http.get(Uri.parse(url));
+
+      print(widget.currentSystem);
+      print(widget.selectedTalkgroups);
+
+      if (response.statusCode == 200) {
+        setState(() {
+          callData = json.decode(response.body);
+          isLoading = false;
+        });
+      } else {
+        throw Exception('Failed to fetch call data');
+      }
+    } catch (error) {
+      setState(() {
+        errorMessage = error.toString();
+        isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final talkgroupNames =
-        selectedTalkgroups.map((tg) => tg['name']).join(', ');
+        widget.selectedTalkgroups.map((tg) => tg['name']).join(', ');
+
+    String formatTimestamp(int timestamp) {
+      final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+      return '${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -355,14 +476,77 @@ class ListenerPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              talkgroupNames.isNotEmpty
-                  ? "Selected Talkgroups: $talkgroupNames"
-                  : 'No talkgroups selected.',
-              style: TextStyle(fontSize: 14),
+              "Selected Talkgroups: $talkgroupNames",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
             ),
+            SizedBox(height: 16),
+            if (isLoading) ...[
+              Center(child: CircularProgressIndicator()),
+            ] else if (errorMessage != null) ...[
+              Center(child: Text('Error: $errorMessage')),
+            ] else if (callData != null && callData!.isNotEmpty) ...[
+              Expanded(
+                child: ListView.builder(
+                  itemCount: callData!.length,
+                  itemBuilder: (context, index) {
+                    final call = callData![index];
+                    final transcript = call['transcript']['text'] ?? '';
+
+                    // Cross-reference talkgroup name
+                    final talkgroupName = widget.selectedTalkgroups.firstWhere(
+                      (tg) => tg['id'] == call['talkgroup'],
+                      orElse: () => {'name': 'Unknown Talkgroup'},
+                    )['name'];
+
+                    return Card(
+                      margin: EdgeInsets.symmetric(vertical: 8),
+                      child: ListTile(
+                        title: Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            talkgroupName,
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              transcript,
+                              style: TextStyle(fontSize: 14),
+                            ),
+                            SizedBox(height: 10),
+                            // Timestamp at the bottom
+                            Text(
+                              formatTimestamp(call['startTime']),
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                        trailing: IconButton(
+                          icon: Icon(Icons.play_arrow),
+                          onPressed: () {
+                            playAudio(call['audioFile']);
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ] else ...[
+              Center(child: Text('No calls available.')),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  void playAudio(String audioFile) {
+    // Placeholder: Integrate an audio player package to play the audio file
+    print('Playing audio: $audioFile');
   }
 }
