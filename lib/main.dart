@@ -30,53 +30,18 @@ class MyApp extends StatelessWidget {
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.greenAccent),
         ),
-        home: MyHomePage(),
+        home: MySystemsPage(),
       ),
     );
   }
 }
 
-class MyAppState extends ChangeNotifier {
-  var current;
-  List<dynamic>? apiData; // Ensure this is nullable
-  var favorites = <dynamic>[]; // Adjust type to accommodate dynamic data
-
-  MyAppState() {
-    fetchApiData();
-  }
-
-  Future<void> fetchApiData() async {
-    try {
-      final response =
-          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
-
-      if (response.statusCode == 200) {
-        apiData = json.decode(response.body);
-        notifyListeners();
-      } else {
-        throw Exception('Failed to load data');
-      }
-    } catch (error) {
-      print('Error fetching API data: $error');
-    }
-  }
-
-  void toggleFavorite(dynamic item) {
-    if (favorites.contains(item)) {
-      favorites.remove(item);
-    } else {
-      favorites.add(item);
-    }
-    notifyListeners();
-  }
-}
-
-class MyHomePage extends StatefulWidget {
+class MySystemsPage extends StatefulWidget {
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MySystemsPage> createState() => _MySystemsPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _MySystemsPageState extends State<MySystemsPage> {
   var selectedIndex = 0;
 
   @override
@@ -84,7 +49,7 @@ class _MyHomePageState extends State<MyHomePage> {
     Widget page;
     switch (selectedIndex) {
       case 0:
-        page = HomePage();
+        page = SystemsPage();
       case 1:
         page = FavoritesPage();
       default:
@@ -118,8 +83,8 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
             ListTile(
-              leading: Icon(Icons.home),
-              title: Text('Home'),
+              leading: Icon(Icons.storage_rounded),
+              title: Text('Systems'),
               onTap: () {
                 setState(() {
                   selectedIndex = 0;
@@ -145,7 +110,38 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-class HomePage extends StatelessWidget {
+class MyAppState extends ChangeNotifier {
+  dynamic current; // Typing can be specific if the API structure is known
+  List<dynamic>? apiData; // Holds the API data
+  var favorites = <dynamic>[]; // List of favorites
+
+  MyAppState() {
+    fetchApiData(); // Automatically fetch data on initialization
+  }
+
+  Future<void> fetchApiData() async {
+    try {
+      final response =
+          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
+
+      if (response.statusCode == 200) {
+        apiData = json.decode(response.body);
+        notifyListeners(); // Notify listeners to rebuild widgets
+      } else {
+        throw Exception('Failed to load data');
+      }
+    } catch (error) {
+      print('Error fetching API data: $error');
+    }
+  }
+
+  void setCurrent(dynamic item) {
+    current = item; // Update 'current'
+    notifyListeners(); // Notify listeners about the change
+  }
+}
+
+class SystemsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<MyAppState>();
@@ -154,25 +150,35 @@ class HomePage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(height: 20),
-          if (appState.apiData != null)
-            ...appState.apiData!.map(
-              (x) => ListTile(
-                title: Text(x['name']), // Correctly access the 'name' field
-                trailing: IconButton(
-                  icon: Icon(
-                    appState.favorites.contains(x)
-                        ? Icons.favorite
-                        : Icons.favorite_border,
+          RichText(
+            text: TextSpan(
+              text: 'Systems',
+              style: DefaultTextStyle.of(context).style.copyWith(
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
-                  onPressed: () {
-                    appState.toggleFavorite(x);
+            ),
+          ),
+          if (appState.apiData != null)
+            ...appState.apiData!.map((x) {
+              return Padding(
+                padding: const EdgeInsets.all(10.0),
+                child: ListTile(
+                  shape: RoundedRectangleBorder(
+                    side: BorderSide(color: Colors.black, width: 1),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  contentPadding: EdgeInsets.all(3),
+                  horizontalTitleGap: 10,
+                  title: Text(x['name']),
+                  onTap: () {
+                    appState.setCurrent(x);
                   },
                 ),
-              ),
-            ),
-          if (appState.apiData == null)
-            CircularProgressIndicator(), // Loader when fetching data
+              );
+            }).toList(),
+          if (appState.apiData == null) CircularProgressIndicator(),
         ],
       ),
     );
@@ -195,6 +201,22 @@ class FavoritesPage extends StatelessWidget {
         return ListTile(
           leading: Icon(Icons.favorite),
           title: Text(item['name']),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class TalkgroupsPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    var appState = context.watch<MyAppState>();
+
+    return ListView(
+      children: appState.current.map((x) {
+        return ListTile(
+          leading: Icon(Icons.favorite),
+          title: Text(x['name']),
         );
       }).toList(),
     );
