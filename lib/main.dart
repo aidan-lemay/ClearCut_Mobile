@@ -92,7 +92,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
                 setState(() {
                   selectedIndex = 0;
                 });
-                Navigator.pop(context); // Close the drawer
+                Navigator.pop(context);
               },
             ),
             ListTile(
@@ -102,7 +102,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
                 setState(() {
                   selectedIndex = 1;
                 });
-                Navigator.pop(context); // Close the drawer
+                Navigator.pop(context);
               },
             ),
           ],
@@ -114,9 +114,9 @@ class _MySystemsPageState extends State<MySystemsPage> {
 }
 
 class MyAppState extends ChangeNotifier {
-  dynamic current; // Current system or talkgroup context
-  List<dynamic>? apiData; // List of systems from API
-  var favorites = <Map<String, dynamic>>[]; // Favorite talkgroup groups
+  dynamic current;
+  List<dynamic>? apiData;
+  var favorites = <Map<String, dynamic>>[];
 
   MyAppState() {
     fetchSystems();
@@ -162,7 +162,6 @@ class MyAppState extends ChangeNotifier {
   }
 
   void addFavorite(String systemId, List<dynamic> talkgroups) {
-    // Check if the favorite pair already exists
     bool alreadyExists = favorites.any((favorite) {
       return favorite['systemId'] == systemId &&
           ListEquality().equals(favorite['talkgroups'], talkgroups);
@@ -230,9 +229,9 @@ class TalkgroupsPage extends StatefulWidget {
 }
 
 class _TalkgroupsPageState extends State<TalkgroupsPage> {
-  String searchQuery = ''; // Store the search query
-  bool filterTranscribed = false; // Store the filter state
-  Map<int, bool> selectedTalkgroups = {}; // Track selected talkgroups
+  String searchQuery = '';
+  bool filterTranscribed = false;
+  Map<int, bool> selectedTalkgroups = {};
   String currentSystem = "";
 
   @override
@@ -273,7 +272,6 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
         } else {
           var talkgroups = snapshot.data ?? [];
 
-          // Filter talkgroups based on search query and "transcribed" filter
           var filteredTalkgroups = talkgroups.where((tg) {
             final matchesQuery = tg['name']
                     .toString()
@@ -298,7 +296,6 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
             ),
             body: Column(
               children: [
-                // Search Bar
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: TextField(
@@ -315,8 +312,6 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
                     },
                   ),
                 ),
-
-                // Transcription Filter
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8.0),
                   child: Row(
@@ -334,8 +329,6 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
                     ],
                   ),
                 ),
-
-                // Talkgroup List
                 Expanded(
                   child: ListView.builder(
                     itemCount: filteredTalkgroups.length,
@@ -375,8 +368,6 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
                     },
                   ),
                 ),
-
-                // Listen to Selected Button
                 if (selectedTalkgroups.values.any((isSelected) => isSelected))
                   Padding(
                     padding: const EdgeInsets.all(8.0),
@@ -511,7 +502,6 @@ class _ListenerPageState extends State<ListenerPage> {
                     final call = callData![index];
                     final transcript = call['transcript']['text'] ?? '';
 
-                    // Cross-reference talkgroup name
                     final talkgroupName = widget.selectedTalkgroups.firstWhere(
                       (tg) => tg['id'] == call['talkgroup'],
                       orElse: () => {'name': 'Unknown Talkgroup'},
@@ -581,7 +571,6 @@ class _ListenerPageState extends State<ListenerPage> {
   void playAudio(String audioFile) async {
     final baseUrl = 'https://audio.clearcutradio.app/';
 
-    // Clean up the audioFile path if it starts with 'audio/'
     if (audioFile.startsWith('audio/')) {
       audioFile = audioFile.replaceFirst('audio/', '');
     }
@@ -590,7 +579,7 @@ class _ListenerPageState extends State<ListenerPage> {
 
     try {
       print('Playing audio from: $fullUrl');
-      await _audioPlayer.play(UrlSource(fullUrl.toString())); // Use UrlSource
+      await _audioPlayer.play(UrlSource(fullUrl.toString()));
       print('Playing audio successfully.');
     } catch (error) {
       print('Error playing audio: $error');
