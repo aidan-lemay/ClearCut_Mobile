@@ -162,8 +162,18 @@ class MyAppState extends ChangeNotifier {
   }
 
   void addFavorite(String systemId, List<dynamic> talkgroups) {
-    favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
-    notifyListeners();
+    // Check if the favorite pair already exists
+    bool alreadyExists = favorites.any((favorite) {
+      return favorite['systemId'] == systemId &&
+          ListEquality().equals(favorite['talkgroups'], talkgroups);
+    });
+
+    if (!alreadyExists) {
+      favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
+      notifyListeners();
+    } else {
+      print('This favorite already exists.');
+    }
   }
 
   void removeFavorite(String systemId, List<dynamic> talkgroups) {
@@ -463,20 +473,7 @@ class _ListenerPageState extends State<ListenerPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Listener'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.favorite),
-            onPressed: () {
-              var appState = context.read<MyAppState>();
-              appState.addFavorite(
-                  widget.currentSystem, widget.selectedTalkgroups);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Added to favorites!')),
-              );
-            },
-          ),
-        ],
+        title: Text('Stream'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -560,6 +557,19 @@ class _ListenerPageState extends State<ListenerPage> {
             ] else ...[
               Center(child: Text('No calls available.')),
             ],
+            Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  var appState = context.read<MyAppState>();
+                  appState.addFavorite(
+                      widget.currentSystem, widget.selectedTalkgroups);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Added to favorites!')),
+                  );
+                },
+                child: Text('Add to Favorites'),
+              ),
+            ),
           ],
         ),
       ),
@@ -626,6 +636,12 @@ class FavoritesPage extends StatelessWidget {
               ),
             );
           },
+          trailing: IconButton(
+              onPressed: () {
+                appState.removeFavorite(
+                    favorite['systemId'], favorite['talkgroups']);
+              },
+              icon: Icon(Icons.delete)),
         );
       },
     );
