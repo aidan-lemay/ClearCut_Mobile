@@ -1,7 +1,7 @@
 name: clearcut_mobile
 description: A native Android companion to https://clearcutradio.app/
 
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'none'
 
 version: 0.0.1+1
 

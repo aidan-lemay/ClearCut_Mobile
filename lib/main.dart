@@ -27,13 +27,30 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (context) => MyAppState(),
-      child: MaterialApp(
-        title: 'Clearcut Mobile',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.greenAccent),
-        ),
-        home: MySystemsPage(),
+      child: Consumer<MyAppState>(
+        builder: (context, appState, _) {
+          return MaterialApp(
+            title: 'Clearcut Mobile',
+            themeMode: ThemeMode.dark,
+            theme: ThemeData(
+              // Remove brightness from here
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.greenAccent,
+                brightness: Brightness.dark,
+              ),
+              textTheme: ThemeData.light().textTheme,
+            ),
+            darkTheme: ThemeData(
+              // Remove brightness from here as well
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.greenAccent,
+                brightness: Brightness.dark,
+              ),
+              textTheme: ThemeData.dark().textTheme,
+            ),
+            home: MySystemsPage(),
+          );
+        },
       ),
     );
   }
@@ -198,7 +215,7 @@ class SystemsPage extends StatelessWidget {
                 padding: const EdgeInsets.all(10.0),
                 child: ListTile(
                   shape: RoundedRectangleBorder(
-                    side: BorderSide(color: Colors.black, width: 1),
+                    side: BorderSide(color: Colors.white, width: 1),
                     borderRadius: BorderRadius.circular(5),
                   ),
                   contentPadding: EdgeInsets.all(3),
