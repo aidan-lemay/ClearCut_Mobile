@@ -224,16 +224,16 @@ class _MySystemsPageState extends State<MySystemsPage> {
                 Navigator.pop(context);
               },
             ),
-            ListTile(
-              leading: Icon(Icons.code),
-              title: Text('Advanced Search'),
-              onTap: () {
-                setState(() {
-                  selectedIndex = 3;
-                });
-                Navigator.pop(context);
-              },
-            ),
+            // ListTile(
+            //   leading: Icon(Icons.code),
+            //   title: Text('Advanced Search'),
+            //   onTap: () {
+            //     setState(() {
+            //       selectedIndex = 3;
+            //     });
+            //     Navigator.pop(context);
+            //   },
+            // ),
             ListTile(
               leading: Icon(Icons.info_outline),
               title: Text('Info'),
@@ -896,6 +896,6 @@ class InfoPage extends StatelessWidget {
 class AdvancedSearch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Text("AdvancedSearch");
+    return Center(child: Text("Advanced Search Coming Soon?"));
   }
 }
