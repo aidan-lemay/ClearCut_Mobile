@@ -172,6 +172,8 @@ class _MySystemsPageState extends State<MySystemsPage> {
         page = FavoritesPage();
       case 2:
         page = InfoPage();
+      case 3:
+        page = AdvancedSearch();
       default:
         throw UnimplementedError('No widget for $selectedIndex');
     }
@@ -218,6 +220,16 @@ class _MySystemsPageState extends State<MySystemsPage> {
               onTap: () {
                 setState(() {
                   selectedIndex = 1;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.code),
+              title: Text('Advanced Search'),
+              onTap: () {
+                setState(() {
+                  selectedIndex = 3;
                 });
                 Navigator.pop(context);
               },
@@ -878,5 +890,12 @@ class InfoPage extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class AdvancedSearch extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Text("AdvancedSearch");
   }
 }
