@@ -748,11 +748,18 @@ class _ListenerPageState extends State<ListenerPage> {
     final fullUrl = Uri.parse('$baseUrl$audioFile');
 
     try {
-      print('Playing audio from: $fullUrl');
-      await _audioPlayer.play(UrlSource(fullUrl.toString()));
-      print('Playing audio successfully.');
+      if (_audioPlayer.state == PlayerState.playing) {
+        // Stop playback if already playing
+        await _audioPlayer.stop();
+        print('Audio stopped.');
+      } else {
+        // Start playback
+        print('Playing audio from: $fullUrl');
+        await _audioPlayer.play(UrlSource(fullUrl.toString()));
+        print('Playing audio successfully.');
+      }
     } catch (error) {
-      print('Error playing audio: $error');
+      print('Error playing/stopping audio: $error');
     }
   }
 }
