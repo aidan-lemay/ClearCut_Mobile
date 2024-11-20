@@ -893,9 +893,93 @@ class InfoPage extends StatelessWidget {
   }
 }
 
-class AdvancedSearch extends StatelessWidget {
+class AdvancedSearch extends StatefulWidget {
+  AdvancedSearch({Key? key}) : super(key: key);
+
+  @override
+  _AdvancedSearchState createState() => _AdvancedSearchState();
+}
+
+class _AdvancedSearchState extends State<AdvancedSearch> {
+  String? _selectedSystem;
+  bool isLoading = true;
+  String? errorMessage;
+  List<DropdownMenuItem<String>>? dropdownItems;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchSystemList();
+  }
+
+  Future<void> fetchSystemList() async {
+    try {
+      var systems =
+          await MyAppState().fetchSystems(); // Fetch systems from the API
+      setState(() {
+        dropdownItems = systems.map<DropdownMenuItem<String>>((system) {
+          return DropdownMenuItem<String>(
+            value:
+                system['id'].toString(), // Replace with the actual key for ID
+            child: Text(system['name']), // Replace with the actual key for Name
+          );
+        }).toList();
+        isLoading = false;
+      });
+    } catch (error) {
+      setState(() {
+        errorMessage = error.toString();
+        isLoading = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Text("AdvancedSearch");
+    return Padding(
+      padding: const EdgeInsets.all(10.0),
+      child: Form(
+        child: Column(
+          children: [
+            if (isLoading)
+              CircularProgressIndicator()
+            else if (errorMessage != null)
+              Text(
+                errorMessage!,
+                style: TextStyle(color: Colors.red),
+              )
+            else
+              DropdownButtonFormField<String>(
+                value: _selectedSystem,
+                items: dropdownItems,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedSystem = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  labelText: 'Select a System',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) =>
+                    value == null ? 'Please select a system' : null,
+              ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                if (_selectedSystem != null) {
+                  print("Selected system: $_selectedSystem");
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Please select a system first!')),
+                  );
+                }
+              },
+              child: Text('Search'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
