@@ -6,6 +6,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:collection/collection.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/us-ny-monroe/1077/us-ny-monroe-1077-1732038152.m4a
@@ -168,6 +170,10 @@ class _MySystemsPageState extends State<MySystemsPage> {
         page = SystemsPage();
       case 1:
         page = FavoritesPage();
+      case 2:
+        page = InfoPage();
+      case 3:
+        page = AdvancedSearch();
       default:
         throw UnimplementedError('No widget for $selectedIndex');
     }
@@ -214,6 +220,26 @@ class _MySystemsPageState extends State<MySystemsPage> {
               onTap: () {
                 setState(() {
                   selectedIndex = 1;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            // ListTile(
+            //   leading: Icon(Icons.code),
+            //   title: Text('Advanced Search'),
+            //   onTap: () {
+            //     setState(() {
+            //       selectedIndex = 3;
+            //     });
+            //     Navigator.pop(context);
+            //   },
+            // ),
+            ListTile(
+              leading: Icon(Icons.info_outline),
+              title: Text('Info'),
+              onTap: () {
+                setState(() {
+                  selectedIndex = 2;
                 });
                 Navigator.pop(context);
               },
@@ -274,6 +300,7 @@ class TalkgroupsPage extends StatefulWidget {
 class _TalkgroupsPageState extends State<TalkgroupsPage> {
   String searchQuery = '';
   bool filterTranscribed = false;
+  bool showFavorites = false;
   Map<int, bool> selectedTalkgroups = {};
   String currentSystem = "";
 
@@ -301,16 +328,46 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
             appBar: AppBar(
-              title: Text('Talkgroups'),
+              title: Text(system['name']),
+              actions: [
+                Padding(
+                  padding: const EdgeInsets.all(10.0),
+                  child: IconButton(
+                    icon: Icon(Icons.favorite),
+                    onPressed: () {
+                      setState(() {
+                        showFavorites = !showFavorites; // Toggle view
+                      });
+                    },
+                  ),
+                ),
+              ],
             ),
-            body: Center(child: CircularProgressIndicator()),
+            body: showFavorites
+                ? FavoritesPage()
+                : Center(child: CircularProgressIndicator()),
           );
         } else if (snapshot.hasError) {
           return Scaffold(
             appBar: AppBar(
-              title: Text('Talkgroups'),
+              title: Text(system['name']),
+              actions: [
+                Padding(
+                  padding: const EdgeInsets.all(10.0),
+                  child: IconButton(
+                    icon: Icon(Icons.favorite),
+                    onPressed: () {
+                      setState(() {
+                        showFavorites = !showFavorites; // Toggle view
+                      });
+                    },
+                  ),
+                ),
+              ],
             ),
-            body: Center(child: Text('Error loading talkgroups.')),
+            body: showFavorites
+                ? FavoritesPage()
+                : Center(child: Text('Error loading talkgroups.')),
           );
         } else {
           var talkgroups = snapshot.data ?? [];
@@ -336,104 +393,122 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
           return Scaffold(
             appBar: AppBar(
               title: Text(system['name']),
-            ),
-            body: Column(
-              children: [
+              actions: [
                 Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: TextField(
-                    decoration: InputDecoration(
-                      labelText: 'Search Talkgroups',
-                      hintText: 'Enter name, description, or ID',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.search),
-                    ),
-                    onChanged: (value) {
+                  padding: const EdgeInsets.all(10.0),
+                  child: IconButton(
+                    icon: Icon(Icons.favorite),
+                    onPressed: () {
                       setState(() {
-                        searchQuery = value;
+                        showFavorites = !showFavorites; // Toggle view
                       });
                     },
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              ],
+            ),
+            body: showFavorites
+                ? FavoritesPage()
+                : Column(
                     children: [
-                      Text('Show only transcribed talkgroups'),
-                      Switch(
-                        value: filterTranscribed,
-                        onChanged: (value) {
-                          setState(() {
-                            filterTranscribed = value;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: filteredTalkgroups.length,
-                    itemBuilder: (context, index) {
-                      var talkgroup = filteredTalkgroups[index];
-                      var isSelected =
-                          selectedTalkgroups[talkgroup['id']] ?? false;
-
-                      return ListTile(
-                        leading: Checkbox(
-                          value: isSelected,
-                          onChanged: (bool? newValue) {
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: TextField(
+                          decoration: InputDecoration(
+                            labelText: 'Search Talkgroups',
+                            hintText: 'Enter name, description, or ID',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: (value) {
                             setState(() {
-                              selectedTalkgroups[talkgroup['id']] =
-                                  newValue ?? false;
+                              searchQuery = value;
                             });
                           },
                         ),
-                        title: Text(talkgroup['name']),
-                        subtitle:
-                            Text(talkgroup['description'] ?? 'No description'),
-                        trailing: talkgroup['transcribe'] == true
-                            ? Icon(Icons.check_circle, color: Colors.green)
-                            : null,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ListenerPage(
-                                selectedTalkgroups: [talkgroup],
-                                currentSystem: currentSystem,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Show only transcribed talkgroups'),
+                            Switch(
+                              value: filterTranscribed,
+                              onChanged: (value) {
+                                setState(() {
+                                  filterTranscribed = value;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: filteredTalkgroups.length,
+                          itemBuilder: (context, index) {
+                            var talkgroup = filteredTalkgroups[index];
+                            var isSelected =
+                                selectedTalkgroups[talkgroup['id']] ?? false;
+
+                            return ListTile(
+                              leading: Checkbox(
+                                value: isSelected,
+                                onChanged: (bool? newValue) {
+                                  setState(() {
+                                    selectedTalkgroups[talkgroup['id']] =
+                                        newValue ?? false;
+                                  });
+                                },
                               ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                if (selectedTalkgroups.values.any((isSelected) => isSelected))
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: ElevatedButton(
-                      onPressed: () {
-                        var selected = filteredTalkgroups
-                            .where((tg) => selectedTalkgroups[tg['id']] == true)
-                            .toList();
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ListenerPage(
-                              selectedTalkgroups: selected,
-                              currentSystem: currentSystem,
-                            ),
+                              title: Text(talkgroup['name']),
+                              subtitle: Text(
+                                  talkgroup['description'] ?? 'No description'),
+                              trailing: talkgroup['transcribe'] == true
+                                  ? Icon(Icons.check_circle,
+                                      color: Colors.green)
+                                  : null,
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ListenerPage(
+                                      selectedTalkgroups: [talkgroup],
+                                      currentSystem: currentSystem,
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      if (selectedTalkgroups.values
+                          .any((isSelected) => isSelected))
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: ElevatedButton(
+                            onPressed: () {
+                              var selected = filteredTalkgroups
+                                  .where((tg) =>
+                                      selectedTalkgroups[tg['id']] == true)
+                                  .toList();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ListenerPage(
+                                    selectedTalkgroups: selected,
+                                    currentSystem: currentSystem,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Text('Listen to Selected'),
                           ),
-                        );
-                      },
-                      child: Text('Listen to Selected'),
-                    ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
           );
         }
       },
@@ -454,6 +529,7 @@ class ListenerPage extends StatefulWidget {
 class _ListenerPageState extends State<ListenerPage> {
   List<dynamic>? callData;
   bool isLoading = true;
+  bool showFavorites = false;
   String? errorMessage;
   String transcriptQuery = '';
   Timer? _refreshTimer;
@@ -556,7 +632,7 @@ class _ListenerPageState extends State<ListenerPage> {
 
     String formatTimestamp(int timestamp) {
       final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
-      return '${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
+      return '${dateTime.month}/${dateTime.day}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
     }
 
     String getDuration(int startTime, int endTime) {
@@ -566,142 +642,170 @@ class _ListenerPageState extends State<ListenerPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Stream'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Selected Talkgroups: $talkgroupNames",
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 16),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'Search Transcripts',
-                hintText: 'Enter keyword',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (value) {
+        title: Text("Stream"),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.all(10.0),
+            child: IconButton(
+              icon: Icon(Icons.favorite),
+              onPressed: () {
                 setState(() {
-                  transcriptQuery = value;
+                  showFavorites = !showFavorites; // Toggle view
                 });
               },
             ),
-            SizedBox(height: 16),
-            if (isLoading) ...[
-              Center(child: CircularProgressIndicator()),
-            ] else if (errorMessage != null) ...[
-              Center(child: Text('Error: $errorMessage')),
-            ] else if (callData != null && callData!.isNotEmpty) ...[
-              Expanded(
-                child: ListView.builder(
-                  itemCount: callData!.length,
-                  itemBuilder: (context, index) {
-                    final call = callData![index];
-                    final transcript = call['transcript'] != null
-                        ? call['transcript']['text'] ?? ''
-                        : '';
+          ),
+        ],
+      ),
+      body: showFavorites
+          ? FavoritesPage()
+          : RefreshIndicator(
+              onRefresh: fetchCalls,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Selected Talkgroups: $talkgroupNames",
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    SizedBox(height: 16),
+                    TextField(
+                      decoration: InputDecoration(
+                        labelText: 'Search Transcripts',
+                        hintText: 'Enter keyword',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          transcriptQuery = value;
+                        });
+                      },
+                    ),
+                    SizedBox(height: 16),
+                    if (isLoading) ...[
+                      Center(child: CircularProgressIndicator()),
+                    ] else if (errorMessage != null) ...[
+                      Center(child: Text('Error: $errorMessage')),
+                    ] else if (callData != null && callData!.isNotEmpty) ...[
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: callData!.length,
+                          itemBuilder: (context, index) {
+                            final call = callData![index];
+                            final transcript = call['transcript'] != null
+                                ? call['transcript']['text'] ?? ''
+                                : '';
 
-                    final talkgroupName = widget.selectedTalkgroups.firstWhere(
-                      (tg) => tg['id'] == call['talkgroup'],
-                      orElse: () => {'name': 'Unknown Talkgroup'},
-                    )['name'];
+                            final talkgroupName =
+                                widget.selectedTalkgroups.firstWhere(
+                              (tg) => tg['id'] == call['talkgroup'],
+                              orElse: () => {'name': 'Unknown Talkgroup'},
+                            )['name'];
 
-                    if (!transcript
-                        .toLowerCase()
-                        .contains(transcriptQuery.toLowerCase())) {
-                      return SizedBox.shrink();
-                    }
+                            if (!transcript
+                                .toLowerCase()
+                                .contains(transcriptQuery.toLowerCase())) {
+                              return SizedBox.shrink();
+                            }
 
-                    return Card(
-                      margin: EdgeInsets.symmetric(vertical: 8),
-                      child: ListTile(
-                        title: Text(
-                          talkgroupName,
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (call['isFetchingTranscript'] == true)
-                              Center(child: CircularProgressIndicator())
-                            else
-                              Text(transcript, style: TextStyle(fontSize: 14)),
-                            SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Text(
-                                  call['startTime'] != null
-                                      ? formatTimestamp(call['startTime'])
-                                      : 'Loading...',
+                            return Card(
+                              margin: EdgeInsets.symmetric(vertical: 8),
+                              child: ListTile(
+                                title: Text(
+                                  talkgroupName,
                                   style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold),
                                 ),
-                                Text(" | "),
-                                Text(
-                                  call['startTime'] != null
-                                      ? getDuration(
-                                          call['startTime'], call['endTime'])
-                                      : 'Loading...',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (call['isFetchingTranscript'] == true)
+                                      Center(child: CircularProgressIndicator())
+                                    else
+                                      Text(transcript,
+                                          style: TextStyle(fontSize: 14)),
+                                    SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          call['startTime'] != null
+                                              ? formatTimestamp(
+                                                  call['startTime'])
+                                              : 'Loading...',
+                                          style: TextStyle(
+                                              fontSize: 12, color: Colors.grey),
+                                        ),
+                                        Text(" | "),
+                                        Text(
+                                          call['startTime'] != null
+                                              ? getDuration(call['startTime'],
+                                                  call['endTime'])
+                                              : 'Loading...',
+                                          style: TextStyle(
+                                              fontSize: 12, color: Colors.grey),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (call['transcript'] == null &&
-                                call['isFetchingTranscript'] != true)
-                              IconButton(
-                                icon: Icon(Icons.edit, color: Colors.orange),
-                                onPressed: () {
-                                  if (call['id'] != null) {
-                                    fetchTranscript(call['id'].toString());
-                                  } else {
-                                    print('Error: call ID is null');
-                                  }
-                                },
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (call['transcript'] == null &&
+                                        call['isFetchingTranscript'] != true)
+                                      IconButton(
+                                        icon: Icon(Icons.edit,
+                                            color: Colors.orange),
+                                        onPressed: () {
+                                          if (call['id'] != null) {
+                                            fetchTranscript(
+                                                call['id'].toString());
+                                          } else {
+                                            print('Error: call ID is null');
+                                          }
+                                        },
+                                      ),
+                                    IconButton(
+                                      icon: Icon(Icons.play_arrow),
+                                      onPressed: () {
+                                        playAudio(call['audioFile']);
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
-                            IconButton(
-                              icon: Icon(Icons.play_arrow),
-                              onPressed: () {
-                                playAudio(call['audioFile']);
-                              },
-                            ),
-                          ],
+                            );
+                          },
                         ),
                       ),
-                    );
-                  },
+                    ] else ...[
+                      Center(child: Text('No calls available.')),
+                    ],
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 15),
+                        child: ElevatedButton(
+                          onPressed: () {
+                            var appState = context.read<MyAppState>();
+                            appState.addFavorite(widget.currentSystem,
+                                widget.selectedTalkgroups);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Added to favorites!')),
+                            );
+                          },
+                          child: Text('Add Talkgroup(s) to Favorites'),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ] else ...[
-              Center(child: Text('No calls available.')),
-            ],
-            Center(
-              child: ElevatedButton(
-                onPressed: () {
-                  var appState = context.read<MyAppState>();
-                  appState.addFavorite(
-                      widget.currentSystem, widget.selectedTalkgroups);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Added to favorites!')),
-                  );
-                },
-                child: Text('Add to Favorites'),
-              ),
             ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -717,11 +821,18 @@ class _ListenerPageState extends State<ListenerPage> {
     final fullUrl = Uri.parse('$baseUrl$audioFile');
 
     try {
-      print('Playing audio from: $fullUrl');
-      await _audioPlayer.play(UrlSource(fullUrl.toString()));
-      print('Playing audio successfully.');
+      if (_audioPlayer.state == PlayerState.playing) {
+        // Stop playback if already playing
+        await _audioPlayer.stop();
+        print('Audio stopped.');
+      } else {
+        // Start playback
+        print('Playing audio from: $fullUrl');
+        await _audioPlayer.play(UrlSource(fullUrl.toString()));
+        print('Playing audio successfully.');
+      }
     } catch (error) {
-      print('Error playing audio: $error');
+      print('Error playing/stopping audio: $error');
     }
   }
 }
@@ -767,5 +878,104 @@ class FavoritesPage extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class InfoPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    var github = Uri.parse("https://github.com/aidan-lemay/ClearCut_Mobile");
+    var mysite = Uri.parse("https://aidanlemay.com");
+    final Uri emailUri = Uri(
+      scheme: 'mailto',
+      path:
+          'clearcutfeedback@aidanlemay.com', // Replace with your email address
+      query: Uri.encodeQueryComponent(
+          'subject=Clearcut Mobile Feedback Request'), // Optional subject and body
+    );
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center, // Center content vertically
+      children: [
+        Text(
+          "Welcome to Clearcut Mobile!",
+          style: TextStyle(fontSize: 32),
+          textAlign: TextAlign.center,
+        ),
+        Padding(
+          padding: const EdgeInsets.all(10.0),
+          child: Text(
+            "Created by Aidan LeMay",
+            style: TextStyle(fontSize: 16),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(10.0),
+          child: ElevatedButton(
+            onPressed: () async {
+              if (await canLaunchUrl(github)) {
+                await launchUrl(github);
+              } else {
+                await Clipboard.setData(ClipboardData(text: github.toString()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                        "Couldn't open link, copied to clipboard instead!"),
+                  ),
+                );
+              }
+            },
+            child: Text('Check Out This Project on GitHub!'),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(10.0),
+          child: ElevatedButton(
+            onPressed: () async {
+              if (await canLaunchUrl(mysite)) {
+                await launchUrl(mysite);
+              } else {
+                await Clipboard.setData(ClipboardData(text: mysite.toString()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                        "Couldn't open link, copied to clipboard instead!"),
+                  ),
+                );
+              }
+            },
+            child: Text('Check Out My Website!'),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(10.0),
+          child: ElevatedButton(
+            onPressed: () async {
+              if (await canLaunchUrl(emailUri)) {
+                await launchUrl(emailUri);
+              } else {
+                await Clipboard.setData(
+                    ClipboardData(text: emailUri.toString()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      "Couldn't open email app, copied address to clipboard instead!",
+                    ),
+                  ),
+                );
+              }
+            },
+            child: Text('Have Feedback? Email Me!'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class AdvancedSearch extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Center(child: Text("Advanced Search Coming Soon?"));
   }
 }
