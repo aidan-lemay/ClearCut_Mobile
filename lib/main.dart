@@ -582,138 +582,143 @@ class _ListenerPageState extends State<ListenerPage> {
       appBar: AppBar(
         title: Text('Stream'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Selected Talkgroups: $talkgroupNames",
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 16),
-            TextField(
-              decoration: InputDecoration(
-                labelText: 'Search Transcripts',
-                hintText: 'Enter keyword',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.search),
+      body: RefreshIndicator(
+        onRefresh: fetchCalls,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Selected Talkgroups: $talkgroupNames",
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
-              onChanged: (value) {
-                setState(() {
-                  transcriptQuery = value;
-                });
-              },
-            ),
-            SizedBox(height: 16),
-            if (isLoading) ...[
-              Center(child: CircularProgressIndicator()),
-            ] else if (errorMessage != null) ...[
-              Center(child: Text('Error: $errorMessage')),
-            ] else if (callData != null && callData!.isNotEmpty) ...[
-              Expanded(
-                child: ListView.builder(
-                  itemCount: callData!.length,
-                  itemBuilder: (context, index) {
-                    final call = callData![index];
-                    final transcript = call['transcript'] != null
-                        ? call['transcript']['text'] ?? ''
-                        : '';
+              SizedBox(height: 16),
+              TextField(
+                decoration: InputDecoration(
+                  labelText: 'Search Transcripts',
+                  hintText: 'Enter keyword',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.search),
+                ),
+                onChanged: (value) {
+                  setState(() {
+                    transcriptQuery = value;
+                  });
+                },
+              ),
+              SizedBox(height: 16),
+              if (isLoading) ...[
+                Center(child: CircularProgressIndicator()),
+              ] else if (errorMessage != null) ...[
+                Center(child: Text('Error: $errorMessage')),
+              ] else if (callData != null && callData!.isNotEmpty) ...[
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: callData!.length,
+                    itemBuilder: (context, index) {
+                      final call = callData![index];
+                      final transcript = call['transcript'] != null
+                          ? call['transcript']['text'] ?? ''
+                          : '';
 
-                    final talkgroupName = widget.selectedTalkgroups.firstWhere(
-                      (tg) => tg['id'] == call['talkgroup'],
-                      orElse: () => {'name': 'Unknown Talkgroup'},
-                    )['name'];
+                      final talkgroupName =
+                          widget.selectedTalkgroups.firstWhere(
+                        (tg) => tg['id'] == call['talkgroup'],
+                        orElse: () => {'name': 'Unknown Talkgroup'},
+                      )['name'];
 
-                    if (!transcript
-                        .toLowerCase()
-                        .contains(transcriptQuery.toLowerCase())) {
-                      return SizedBox.shrink();
-                    }
+                      if (!transcript
+                          .toLowerCase()
+                          .contains(transcriptQuery.toLowerCase())) {
+                        return SizedBox.shrink();
+                      }
 
-                    return Card(
-                      margin: EdgeInsets.symmetric(vertical: 8),
-                      child: ListTile(
-                        title: Text(
-                          talkgroupName,
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (call['isFetchingTranscript'] == true)
-                              Center(child: CircularProgressIndicator())
-                            else
-                              Text(transcript, style: TextStyle(fontSize: 14)),
-                            SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Text(
-                                  call['startTime'] != null
-                                      ? formatTimestamp(call['startTime'])
-                                      : 'Loading...',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
+                      return Card(
+                        margin: EdgeInsets.symmetric(vertical: 8),
+                        child: ListTile(
+                          title: Text(
+                            talkgroupName,
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (call['isFetchingTranscript'] == true)
+                                Center(child: CircularProgressIndicator())
+                              else
+                                Text(transcript,
+                                    style: TextStyle(fontSize: 14)),
+                              SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Text(
+                                    call['startTime'] != null
+                                        ? formatTimestamp(call['startTime'])
+                                        : 'Loading...',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                  Text(" | "),
+                                  Text(
+                                    call['startTime'] != null
+                                        ? getDuration(
+                                            call['startTime'], call['endTime'])
+                                        : 'Loading...',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (call['transcript'] == null &&
+                                  call['isFetchingTranscript'] != true)
+                                IconButton(
+                                  icon: Icon(Icons.edit, color: Colors.orange),
+                                  onPressed: () {
+                                    if (call['id'] != null) {
+                                      fetchTranscript(call['id'].toString());
+                                    } else {
+                                      print('Error: call ID is null');
+                                    }
+                                  },
                                 ),
-                                Text(" | "),
-                                Text(
-                                  call['startTime'] != null
-                                      ? getDuration(
-                                          call['startTime'], call['endTime'])
-                                      : 'Loading...',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (call['transcript'] == null &&
-                                call['isFetchingTranscript'] != true)
                               IconButton(
-                                icon: Icon(Icons.edit, color: Colors.orange),
+                                icon: Icon(Icons.play_arrow),
                                 onPressed: () {
-                                  if (call['id'] != null) {
-                                    fetchTranscript(call['id'].toString());
-                                  } else {
-                                    print('Error: call ID is null');
-                                  }
+                                  playAudio(call['audioFile']);
                                 },
                               ),
-                            IconButton(
-                              icon: Icon(Icons.play_arrow),
-                              onPressed: () {
-                                playAudio(call['audioFile']);
-                              },
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
+                      );
+                    },
+                  ),
+                ),
+              ] else ...[
+                Center(child: Text('No calls available.')),
+              ],
+              Center(
+                child: ElevatedButton(
+                  onPressed: () {
+                    var appState = context.read<MyAppState>();
+                    appState.addFavorite(
+                        widget.currentSystem, widget.selectedTalkgroups);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Added to favorites!')),
                     );
                   },
+                  child: Text('Add to Favorites'),
                 ),
               ),
-            ] else ...[
-              Center(child: Text('No calls available.')),
             ],
-            Center(
-              child: ElevatedButton(
-                onPressed: () {
-                  var appState = context.read<MyAppState>();
-                  appState.addFavorite(
-                      widget.currentSystem, widget.selectedTalkgroups);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Added to favorites!')),
-                  );
-                },
-                child: Text('Add to Favorites'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
