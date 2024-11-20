@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/us-ny-monroe/1077/us-ny-monroe-1077-1732038152.m4a
@@ -81,6 +82,23 @@ class MyAppState extends ChangeNotifier {
       }
     } catch (error) {
       print('Error fetching API data: $error');
+    }
+  }
+
+  Future<List<dynamic>> systemsList() async {
+    try {
+      final response =
+          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data; // Return the parsed JSON data
+      } else {
+        throw Exception('Failed to load data');
+      }
+    } catch (error) {
+      print('Error fetching API data: $error');
+      throw error; // Rethrow the error for the calling function to handle
     }
   }
 
@@ -902,9 +920,14 @@ class AdvancedSearch extends StatefulWidget {
 
 class _AdvancedSearchState extends State<AdvancedSearch> {
   String? _selectedSystem;
-  bool isLoading = true;
+  String? _selectedTalkgroup;
+  bool isLoadingSystems = true;
+  bool isLoadingTalkgroups = false;
   String? errorMessage;
-  List<DropdownMenuItem<String>>? dropdownItems;
+  List<DropdownMenuItem<String>>? systemDropdownItems;
+  List<DropdownMenuItem<String>>? talkgroupDropdownItems;
+  DateTimeRange? _selectedDateRange;
+  TextEditingController keywordController = TextEditingController();
 
   @override
   void initState() {
@@ -914,22 +937,64 @@ class _AdvancedSearchState extends State<AdvancedSearch> {
 
   Future<void> fetchSystemList() async {
     try {
-      var systems =
-          await MyAppState().fetchSystems(); // Fetch systems from the API
+      var systems = await MyAppState().systemsList();
       setState(() {
-        dropdownItems = systems.map<DropdownMenuItem<String>>((system) {
+        systemDropdownItems = systems.map<DropdownMenuItem<String>>((system) {
           return DropdownMenuItem<String>(
-            value:
-                system['id'].toString(), // Replace with the actual key for ID
-            child: Text(system['name']), // Replace with the actual key for Name
+            value: system['id'].toString(),
+            child: Text(system['name']),
           );
         }).toList();
-        isLoading = false;
+        isLoadingSystems = false;
       });
     } catch (error) {
       setState(() {
         errorMessage = error.toString();
-        isLoading = false;
+        isLoadingSystems = false;
+      });
+    }
+  }
+
+  Future<void> fetchTalkgroups(String systemId) async {
+    setState(() {
+      isLoadingTalkgroups = true;
+      talkgroupDropdownItems = null;
+    });
+    try {
+      var talkgroups = await MyAppState().fetchTalkgroups(systemId);
+      setState(() {
+        talkgroupDropdownItems =
+            talkgroups.map<DropdownMenuItem<String>>((talkgroup) {
+          return DropdownMenuItem<String>(
+            value: talkgroup['id'].toString(),
+            child: Text(talkgroup['name']),
+          );
+        }).toList();
+        isLoadingTalkgroups = false;
+      });
+    } catch (error) {
+      setState(() {
+        errorMessage = error.toString();
+        isLoadingTalkgroups = false;
+      });
+    }
+  }
+
+  Future<void> pickDateRange() async {
+    final initialRange = DateTimeRange(
+      start: DateTime.now().subtract(Duration(days: 7)),
+      end: DateTime.now(),
+    );
+    final newRange = await showDateRangePicker(
+      context: context,
+      initialDateRange: _selectedDateRange ?? initialRange,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+
+    if (newRange != null) {
+      setState(() {
+        _selectedDateRange = newRange;
       });
     }
   }
@@ -941,7 +1006,7 @@ class _AdvancedSearchState extends State<AdvancedSearch> {
       child: Form(
         child: Column(
           children: [
-            if (isLoading)
+            if (isLoadingSystems)
               CircularProgressIndicator()
             else if (errorMessage != null)
               Text(
@@ -951,27 +1016,71 @@ class _AdvancedSearchState extends State<AdvancedSearch> {
             else
               DropdownButtonFormField<String>(
                 value: _selectedSystem,
-                items: dropdownItems,
+                items: systemDropdownItems,
                 onChanged: (value) {
                   setState(() {
                     _selectedSystem = value;
+                    _selectedTalkgroup =
+                        null; // Clear talkgroup when system changes
                   });
+                  fetchTalkgroups(value!);
                 },
                 decoration: InputDecoration(
                   labelText: 'Select a System',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) =>
-                    value == null ? 'Please select a system' : null,
+              ),
+            const SizedBox(height: 20),
+            if (isLoadingTalkgroups)
+              CircularProgressIndicator()
+            else if (talkgroupDropdownItems != null)
+              DropdownButtonFormField<String>(
+                value: _selectedTalkgroup,
+                items: talkgroupDropdownItems,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTalkgroup = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  labelText: 'Select a Talkgroup',
+                  border: OutlineInputBorder(),
+                ),
               ),
             const SizedBox(height: 20),
             ElevatedButton(
+              onPressed: pickDateRange,
+              child: Text(
+                _selectedDateRange == null
+                    ? 'Select Date Range'
+                    : '${DateFormat.yMMMd().format(_selectedDateRange!.start)} - ${DateFormat.yMMMd().format(_selectedDateRange!.end)}',
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextFormField(
+              controller: keywordController,
+              decoration: InputDecoration(
+                labelText: 'Enter Keyword',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
               onPressed: () {
-                if (_selectedSystem != null) {
-                  print("Selected system: $_selectedSystem");
+                if (_selectedSystem != null &&
+                    _selectedTalkgroup != null &&
+                    _selectedDateRange != null) {
+                  // Perform query based on selected system, talkgroup, date range, and keyword
+                  print("System ID: $_selectedSystem");
+                  print("Talkgroup ID: $_selectedTalkgroup");
+                  print(
+                      "Date Range: ${_selectedDateRange!.start} - ${_selectedDateRange!.end}");
+                  print("Keyword: ${keywordController.text}");
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Please select a system first!')),
+                    SnackBar(
+                      content: Text('Please complete all selections first!'),
+                    ),
                   );
                 }
               },
