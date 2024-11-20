@@ -570,7 +570,7 @@ class _ListenerPageState extends State<ListenerPage> {
 
     String formatTimestamp(int timestamp) {
       final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
-      return '${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
+      return '${dateTime.month}/${dateTime.day}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
     }
 
     String getDuration(int startTime, int endTime) {

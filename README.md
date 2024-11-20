@@ -6,7 +6,7 @@
 * "Pull Down to Refresh" calls page
 * Add a way to get from the "Stream" page back to the "Favorites" or "Systems" without going back three levels
 * If playing, play button should stop playback
-* Timestamp should have date
+* ~~Timestamp should have date~~ Done!
 * "Load More" button under last call in list
 * "Advanced Search" page
 * Keep last position on app start
