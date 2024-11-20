@@ -787,16 +787,19 @@ class _ListenerPageState extends State<ListenerPage> {
                       Center(child: Text('No calls available.')),
                     ],
                     Center(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          var appState = context.read<MyAppState>();
-                          appState.addFavorite(
-                              widget.currentSystem, widget.selectedTalkgroups);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Added to favorites!')),
-                          );
-                        },
-                        child: Text('Add to Favorites'),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 15),
+                        child: ElevatedButton(
+                          onPressed: () {
+                            var appState = context.read<MyAppState>();
+                            appState.addFavorite(widget.currentSystem,
+                                widget.selectedTalkgroups);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Added to favorites!')),
+                            );
+                          },
+                          child: Text('Add Talkgroup(s) to Favorites'),
+                        ),
                       ),
                     ),
                   ],
