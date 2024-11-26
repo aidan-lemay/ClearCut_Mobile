@@ -10,7 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 
 /* Clearcut API Paths:
-Audio: https://audio.clearcutradio.app/audio/us-ny-monroe/1077/us-ny-monroe-1077-1732038152.m4a
+Audio: https://audio.clearcutradio.app/audio/[SYSTEM NAME]/[TGID]/[FILE NAME]
 URL: https://clearcutradio.app
 Systems: /api/v1/systems
 Talkgroups: /api/v1/talkgroups?system=[SYSTEM NAME]
@@ -18,6 +18,7 @@ Calls: /api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID]
 Stream: /api/v1/stream?system=us-ny-monroe&talkgroup=[TGID]
 Multiple TGs Calls: /api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID,TGID,TGID]
 Multiple TGs Stream: /api/v1/stream?system=us-ny-monroe&talkgroup=[TGID,TGID,TGID]
+More Calls: https://clearcutradio.app/api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID]&before_ts=[TIMESTAMP OF LAST CALL]
 */
 
 void main() {
@@ -533,6 +534,7 @@ class _ListenerPageState extends State<ListenerPage> {
   String? errorMessage;
   String transcriptQuery = '';
   Timer? _refreshTimer;
+  int? lastCallTimestamp;
 
   @override
   void initState() {
@@ -598,20 +600,34 @@ class _ListenerPageState extends State<ListenerPage> {
     }
   }
 
-  Future<void> fetchCalls() async {
+  Future<void> fetchCalls({int? beforeTs}) async {
     try {
       final systemId = widget.currentSystem;
       final talkgroupIds =
           widget.selectedTalkgroups.map((tg) => tg['id']).join(',');
 
-      final url =
+      String url =
           'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds';
+      if (beforeTs != null) {
+        url += '&before_ts=$beforeTs';
+      }
 
       final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         setState(() {
-          callData = json.decode(response.body);
+          final newData = json.decode(response.body);
+
+          if (callData == null || beforeTs == null) {
+            callData = newData;
+          } else {
+            callData!.addAll(newData);
+          }
+
+          if (callData != null && callData!.isNotEmpty) {
+            lastCallTimestamp = callData!.last['startTime'];
+          }
+
           isLoading = false;
         });
       } else {
@@ -693,13 +709,32 @@ class _ListenerPageState extends State<ListenerPage> {
                     ] else if (callData != null && callData!.isNotEmpty) ...[
                       Expanded(
                         child: ListView.builder(
-                          itemCount: callData!.length,
+                          itemCount:
+                              callData!.length + 1, // Add 1 for the button
                           itemBuilder: (context, index) {
+                            if (index == callData!.length) {
+                              // Render the button at the end
+                              return Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: ElevatedButton(
+                                    onPressed: () async {
+                                      if (lastCallTimestamp != null) {
+                                        await fetchCalls(
+                                            beforeTs: lastCallTimestamp);
+                                      }
+                                    },
+                                    child: Text('Load More'),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            // Render the list item
                             final call = callData![index];
                             final transcript = call['transcript'] != null
                                 ? call['transcript']['text'] ?? ''
                                 : '';
-
                             final talkgroupName =
                                 widget.selectedTalkgroups.firstWhere(
                               (tg) => tg['id'] == call['talkgroup'],
