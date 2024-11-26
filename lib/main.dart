@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import '../services/sse_service.dart';
 
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/[SYSTEM NAME]/[TGID]/[FILE NAME]
@@ -15,7 +16,7 @@ URL: https://clearcutradio.app
 Systems: /api/v1/systems
 Talkgroups: /api/v1/talkgroups?system=[SYSTEM NAME]
 Calls: /api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID]
-Stream: /api/v1/stream?system=us-ny-monroe&talkgroup=[TGID]
+Stream: /api/v1/stream?system=[SYSTEM NAME]&talkgroup=[TGID]
 Multiple TGs Calls: /api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID,TGID,TGID]
 Multiple TGs Stream: /api/v1/stream?system=us-ny-monroe&talkgroup=[TGID,TGID,TGID]
 More Calls: https://clearcutradio.app/api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID]&before_ts=[TIMESTAMP OF LAST CALL]
@@ -528,26 +529,20 @@ class ListenerPage extends StatefulWidget {
 }
 
 class _ListenerPageState extends State<ListenerPage> {
-  List<dynamic>? callData;
+  List<dynamic> callData = [];
   bool isLoading = true;
   bool showFavorites = false;
-  String? errorMessage;
   String transcriptQuery = '';
   Timer? _refreshTimer;
+  late SSEService _sseService;
+  late AudioPlayer _audioPlayer;
   int? lastCallTimestamp;
 
   @override
   void initState() {
     super.initState();
-    fetchCalls();
     initializeAudioPlayer();
-    startAutoRefresh();
-  }
-
-  void startAutoRefresh() {
-    _refreshTimer = Timer.periodic(Duration(seconds: 5), (timer) {
-      fetchCalls();
-    });
+    fetchInitialCalls();
   }
 
   @override
@@ -561,314 +556,167 @@ class _ListenerPageState extends State<ListenerPage> {
     _audioPlayer = AudioPlayer();
   }
 
-  Future<void> fetchTranscript(String callId) async {
-    try {
-      setState(() {
-        final index = callData!.indexWhere((call) => call['id'] == callId);
-        if (index != -1) {
-          callData![index]['isFetchingTranscript'] = true;
-        }
-      });
-
-      final response = await http.post(
-        Uri.parse(
-            'https://clearcutradio.app/api/v1/calls/transcribe?id=$callId'),
-      );
-
-      if (response.statusCode == 200) {
-        setState(() {
-          final updatedCall = json.decode(response.body);
-          final index = callData!.indexWhere((call) => call['id'] == callId);
-          if (index != -1) {
-            callData![index] = updatedCall;
-          }
-        });
-      } else {
-        print('Failed to fetch transcript: ${response.statusCode}');
-      }
-    } catch (error) {
-      print('Error fetching transcript: $error');
-    } finally {
-      setState(() {
-        final index = callData!.indexWhere((call) => call['id'] == callId);
-        if (index != -1) {
-          callData![index].remove('isFetchingTranscript');
-        }
-      });
-
-      await fetchCalls();
-    }
-  }
-
-  Future<void> fetchCalls({int? beforeTs}) async {
+  // Fetch initial calls and their transcriptions
+  Future<void> fetchInitialCalls() async {
     try {
       final systemId = widget.currentSystem;
       final talkgroupIds =
           widget.selectedTalkgroups.map((tg) => tg['id']).join(',');
 
-      String url =
-          'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds';
-      if (beforeTs != null) {
-        url += '&before_ts=$beforeTs';
-      }
-
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(
+          'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds'));
 
       if (response.statusCode == 200) {
+        final initialData = json.decode(response.body);
         setState(() {
-          final newData = json.decode(response.body);
-
-          if (callData == null || beforeTs == null) {
-            callData = newData;
-          } else {
-            callData!.addAll(newData);
-          }
-
-          if (callData != null && callData!.isNotEmpty) {
-            lastCallTimestamp = callData!.last['startTime'];
-          }
-
+          callData = initialData;
           isLoading = false;
         });
+
+        // After initial data is loaded, subscribe to SSE for new calls
+        subscribeToSSE();
       } else {
-        throw Exception('Failed to fetch call data');
+        setState(() {
+          isLoading = false;
+        });
+        throw Exception('Failed to load initial call data');
       }
     } catch (error) {
       setState(() {
-        errorMessage = error.toString();
         isLoading = false;
       });
+      print('Error fetching initial calls: $error');
+    }
+  }
+
+  // Subscribe to the SSE stream for new calls
+  void subscribeToSSE() {
+    final talkgroupIds =
+        widget.selectedTalkgroups.map((tg) => tg['id']).toList();
+
+    _sseService = SSEService(
+      systemName: widget.currentSystem,
+      talkgroupIds: talkgroupIds,
+    );
+
+    _sseService.startListening((newCall) {
+      print('New call received: $newCall');
+      setState(() {
+        callData.insert(0, newCall); // Insert new call at the top
+      });
+    });
+  }
+
+  // Play audio for the call
+  void playAudio(String audioFile) async {
+    const baseUrl = 'https://audio.clearcutradio.app/';
+    final fullUrl = Uri.parse('$baseUrl$audioFile');
+
+    try {
+      if (_audioPlayer.state == PlayerState.playing) {
+        await _audioPlayer.stop();
+      } else {
+        await _audioPlayer.play(UrlSource(fullUrl.toString()));
+      }
+    } catch (error) {
+      print('Error playing/stopping audio: $error');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final talkgroupNames =
-        widget.selectedTalkgroups.map((tg) => tg['name']).join(', ');
-
     String formatTimestamp(int timestamp) {
       final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
       return '${dateTime.month}/${dateTime.day}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
     }
 
-    String getDuration(int startTime, int endTime) {
-      int duration = endTime - startTime;
-      return '$duration Sec.';
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text("Stream"),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.all(10.0),
-            child: IconButton(
-              icon: Icon(Icons.favorite),
-              onPressed: () {
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Selected Talkgroups: ${widget.selectedTalkgroups.map((tg) => tg['name']).join(', ')}",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              decoration: InputDecoration(
+                labelText: 'Search Transcripts',
+                hintText: 'Enter keyword',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (value) {
                 setState(() {
-                  showFavorites = !showFavorites; // Toggle view
+                  transcriptQuery = value;
                 });
               },
             ),
-          ),
-        ],
-      ),
-      body: showFavorites
-          ? FavoritesPage()
-          : RefreshIndicator(
-              onRefresh: fetchCalls,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Selected Talkgroups: $talkgroupNames",
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                    ),
-                    SizedBox(height: 16),
-                    TextField(
-                      decoration: InputDecoration(
-                        labelText: 'Search Transcripts',
-                        hintText: 'Enter keyword',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: (value) {
-                        setState(() {
-                          transcriptQuery = value;
-                        });
-                      },
-                    ),
-                    SizedBox(height: 16),
-                    if (isLoading) ...[
-                      Center(child: CircularProgressIndicator()),
-                    ] else if (errorMessage != null) ...[
-                      Center(child: Text('Error: $errorMessage')),
-                    ] else if (callData != null && callData!.isNotEmpty) ...[
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount:
-                              callData!.length + 1, // Add 1 for the button
-                          itemBuilder: (context, index) {
-                            if (index == callData!.length) {
-                              // Render the button at the end
-                              return Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: ElevatedButton(
-                                    onPressed: () async {
-                                      if (lastCallTimestamp != null) {
-                                        await fetchCalls(
-                                            beforeTs: lastCallTimestamp);
-                                      }
-                                    },
-                                    child: Text('Load More'),
-                                  ),
-                                ),
-                              );
-                            }
+            SizedBox(height: 16),
+            if (isLoading)
+              Center(child: CircularProgressIndicator())
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: callData.length,
+                  itemBuilder: (context, index) {
+                    final call = callData[index];
+                    final transcript = call['transcript'] != null
+                        ? call['transcript']['text'] ?? ''
+                        : '';
+                    final talkgroupName = widget.selectedTalkgroups.firstWhere(
+                      (tg) => tg['id'] == call['talkgroup'],
+                      orElse: () => {'name': 'Unknown Talkgroup'},
+                    )['name'];
 
-                            // Render the list item
-                            final call = callData![index];
-                            final transcript = call['transcript'] != null
-                                ? call['transcript']['text'] ?? ''
-                                : '';
-                            final talkgroupName =
-                                widget.selectedTalkgroups.firstWhere(
-                              (tg) => tg['id'] == call['talkgroup'],
-                              orElse: () => {'name': 'Unknown Talkgroup'},
-                            )['name'];
+                    if (!transcript
+                        .toLowerCase()
+                        .contains(transcriptQuery.toLowerCase())) {
+                      return SizedBox.shrink();
+                    }
 
-                            if (!transcript
-                                .toLowerCase()
-                                .contains(transcriptQuery.toLowerCase())) {
-                              return SizedBox.shrink();
-                            }
-
-                            return Card(
-                              margin: EdgeInsets.symmetric(vertical: 8),
-                              child: ListTile(
-                                title: Text(
-                                  talkgroupName,
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (call['isFetchingTranscript'] == true)
-                                      Center(child: CircularProgressIndicator())
-                                    else
-                                      Text(transcript,
-                                          style: TextStyle(fontSize: 14)),
-                                    SizedBox(height: 10),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          call['startTime'] != null
-                                              ? formatTimestamp(
-                                                  call['startTime'])
-                                              : 'Loading...',
-                                          style: TextStyle(
-                                              fontSize: 12, color: Colors.grey),
-                                        ),
-                                        Text(" | "),
-                                        Text(
-                                          call['startTime'] != null
-                                              ? getDuration(call['startTime'],
-                                                  call['endTime'])
-                                              : 'Loading...',
-                                          style: TextStyle(
-                                              fontSize: 12, color: Colors.grey),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (call['transcript'] == null &&
-                                        call['isFetchingTranscript'] != true)
-                                      IconButton(
-                                        icon: Icon(Icons.edit,
-                                            color: Colors.orange),
-                                        onPressed: () {
-                                          if (call['id'] != null) {
-                                            fetchTranscript(
-                                                call['id'].toString());
-                                          } else {
-                                            print('Error: call ID is null');
-                                          }
-                                        },
-                                      ),
-                                    IconButton(
-                                      icon: Icon(Icons.play_arrow),
-                                      onPressed: () {
-                                        playAudio(call['audioFile']);
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
+                    return Card(
+                      margin: EdgeInsets.symmetric(vertical: 8),
+                      child: ListTile(
+                        title: Text(
+                          talkgroupName,
+                          style: TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold),
                         ),
-                      ),
-                    ] else ...[
-                      Center(child: Text('No calls available.')),
-                    ],
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 15),
-                        child: ElevatedButton(
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(transcript, style: TextStyle(fontSize: 14)),
+                            SizedBox(height: 10),
+                            Text(
+                              call['startTime'] != null
+                                  ? formatTimestamp(call['startTime'])
+                                  : 'Loading...',
+                              style:
+                                  TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                        trailing: IconButton(
+                          icon: Icon(Icons.play_arrow),
                           onPressed: () {
-                            var appState = context.read<MyAppState>();
-                            appState.addFavorite(widget.currentSystem,
-                                widget.selectedTalkgroups);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Added to favorites!')),
-                            );
+                            playAudio(call['audioFile']);
                           },
-                          child: Text('Add Talkgroup(s) to Favorites'),
                         ),
                       ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
-            ),
+          ],
+        ),
+      ),
     );
-  }
-
-  late AudioPlayer _audioPlayer;
-
-  void playAudio(String audioFile) async {
-    const baseUrl = 'https://audio.clearcutradio.app/';
-
-    if (audioFile.startsWith('audio/')) {
-      audioFile = audioFile.replaceFirst('audio/', '');
-    }
-
-    final fullUrl = Uri.parse('$baseUrl$audioFile');
-
-    try {
-      if (_audioPlayer.state == PlayerState.playing) {
-        // Stop playback if already playing
-        await _audioPlayer.stop();
-        print('Audio stopped.');
-      } else {
-        // Start playback
-        print('Playing audio from: $fullUrl');
-        await _audioPlayer.play(UrlSource(fullUrl.toString()));
-        print('Playing audio successfully.');
-      }
-    } catch (error) {
-      print('Error playing/stopping audio: $error');
-    }
   }
 }
 
