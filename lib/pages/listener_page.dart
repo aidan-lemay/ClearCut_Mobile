@@ -1,7 +1,9 @@
+import 'package:clearcut_mobile/main.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:provider/provider.dart';
 import 'dart:async';
 import '../services/sse_service.dart';
 
@@ -18,6 +20,7 @@ class ListenerPage extends StatefulWidget {
 class _ListenerPageState extends State<ListenerPage> {
   List<dynamic> callData = [];
   bool isLoading = true;
+  bool isLoadingMore = false;
   String transcriptQuery = '';
   late SSEService _sseService;
   late AudioPlayer _audioPlayer;
@@ -51,7 +54,6 @@ class _ListenerPageState extends State<ListenerPage> {
       if (response.statusCode == 200) {
         final initialData = json.decode(response.body);
 
-        // Re-map the initial call data to ensure transcript is a string, not an object
         initialData.forEach((call) {
           if (call['transcript'] != null && call['transcript'] is Map) {
             call['transcript'] = call['transcript']['text'] ??
@@ -79,6 +81,53 @@ class _ListenerPageState extends State<ListenerPage> {
         isLoading = false;
       });
       print('Error fetching initial calls: $error');
+    }
+  }
+
+  Future<void> fetchMoreCalls() async {
+    if (isLoadingMore || callData.isEmpty) return;
+
+    setState(() {
+      isLoadingMore = true;
+    });
+
+    try {
+      final systemId = widget.currentSystem;
+      final talkgroupIds =
+          widget.selectedTalkgroups.map((tg) => tg['id']).join(',');
+      final lastTimestamp = callData.last['startTime'];
+
+      final response = await http.get(Uri.parse(
+          'https://clearcutradio.app/api/v1/calls?system=$systemId&talkgroup=$talkgroupIds&before_ts=$lastTimestamp'));
+
+      if (response.statusCode == 200) {
+        final newCalls = json.decode(response.body);
+
+        newCalls.forEach((call) {
+          if (call['transcript'] != null && call['transcript'] is Map) {
+            call['transcript'] = call['transcript']['text'] ??
+                ''; // Map transcript object to string
+          } else if (call['transcript'] == null) {
+            call['transcript'] =
+                ''; // If transcript is null, set it to an empty string
+          }
+        });
+
+        setState(() {
+          callData.addAll(newCalls);
+          isLoadingMore = false;
+        });
+      } else {
+        setState(() {
+          isLoadingMore = false;
+        });
+        throw Exception('Failed to load more call data');
+      }
+    } catch (error) {
+      setState(() {
+        isLoadingMore = false;
+      });
+      print('Error fetching more calls: $error');
     }
   }
 
@@ -177,8 +226,22 @@ class _ListenerPageState extends State<ListenerPage> {
             else
               Expanded(
                 child: ListView.builder(
-                  itemCount: callData.length,
+                  itemCount: callData.length + 1, // Add 1 for the button
                   itemBuilder: (context, index) {
+                    if (index == callData.length) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16.0),
+                        child: Center(
+                          child: ElevatedButton(
+                            onPressed: fetchMoreCalls,
+                            child: isLoadingMore
+                                ? CircularProgressIndicator()
+                                : Text('Load More Calls'),
+                          ),
+                        ),
+                      );
+                    }
+
                     final call = callData[index];
                     final transcript =
                         call['transcript'] ?? 'No transcript available';
@@ -231,6 +294,22 @@ class _ListenerPageState extends State<ListenerPage> {
                   },
                 ),
               ),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 15),
+                child: ElevatedButton(
+                  onPressed: () {
+                    var appState = context.read<MyAppState>();
+                    appState.addFavorite(
+                        widget.currentSystem, widget.selectedTalkgroups);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Added to favorites!')),
+                    );
+                  },
+                  child: Text('Add Talkgroup(s) to Favorites'),
+                ),
+              ),
+            ),
           ],
         ),
       ),
