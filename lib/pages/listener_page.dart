@@ -173,13 +173,23 @@ class _ListenerPageState extends State<ListenerPage> {
 
   void playAudio(String audioFile) async {
     const baseUrl = 'https://audio.clearcutradio.app/';
+
+    if (audioFile.startsWith('audio/')) {
+      audioFile = audioFile.replaceFirst('audio/', '');
+    }
+
     final fullUrl = Uri.parse('$baseUrl$audioFile');
 
     try {
       if (_audioPlayer.state == PlayerState.playing) {
+        // Stop playback if already playing
         await _audioPlayer.stop();
+        print('Audio stopped.');
       } else {
+        // Start playback
+        print('Playing audio from: $fullUrl');
         await _audioPlayer.play(UrlSource(fullUrl.toString()));
+        print('Playing audio successfully.');
       }
     } catch (error) {
       print('Error playing/stopping audio: $error');
