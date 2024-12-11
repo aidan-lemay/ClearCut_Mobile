@@ -203,6 +203,10 @@ class _ListenerPageState extends State<ListenerPage> {
       return '${dateTime.month}/${dateTime.day}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}:${dateTime.second}';
     }
 
+    String formatDuration(int endtime, int starttime) {
+      return ' | ${endtime - starttime} Sec';
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text("Stream"),
@@ -284,12 +288,24 @@ class _ListenerPageState extends State<ListenerPage> {
                             Text(transcriptText,
                                 style: TextStyle(fontSize: 14)),
                             SizedBox(height: 10),
-                            Text(
-                              call['startTime'] != null
-                                  ? formatTimestamp(call['startTime'])
-                                  : 'Loading...',
-                              style:
-                                  TextStyle(fontSize: 12, color: Colors.grey),
+                            Row(
+                              children: [
+                                Text(
+                                  call['startTime'] != null
+                                      ? formatTimestamp(call['startTime'])
+                                      : 'Loading...',
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                                Text(
+                                  call['startTime'] != null
+                                      ? formatDuration(
+                                          call['endTime'], call['startTime'])
+                                      : 'Loading...',
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                              ],
                             ),
                           ],
                         ),
