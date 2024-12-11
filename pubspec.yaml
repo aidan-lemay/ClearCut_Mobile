@@ -3,7 +3,7 @@ description: A native Android companion to https://clearcutradio.app/
 
 publish_to: 'none'
 
-version: 2.5.1
+version: 2.6.0
 
 environment:
   sdk: ^3.1.1
