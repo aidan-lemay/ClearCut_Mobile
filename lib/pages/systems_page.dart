@@ -13,6 +13,7 @@ class MySystemsPage extends StatefulWidget {
 
 class _MySystemsPageState extends State<MySystemsPage> {
   var selectedIndex = 0;
+  bool showFavorites = false;
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +40,19 @@ class _MySystemsPageState extends State<MySystemsPage> {
             onPressed: () => Scaffold.of(context).openDrawer(),
           ),
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.all(10.0),
+            child: IconButton(
+              icon: Icon(Icons.favorite),
+              onPressed: () {
+                setState(() {
+                  showFavorites = !showFavorites; // Toggle view
+                });
+              },
+            ),
+          ),
+        ],
       ),
       drawer: Drawer(
         child: ListView(
@@ -99,7 +113,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
           ],
         ),
       ),
-      body: page,
+      body: showFavorites ? FavoritesPage() : page,
     );
   }
 }
