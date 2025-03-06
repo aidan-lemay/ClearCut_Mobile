@@ -36,9 +36,36 @@ class FavoritesPage extends StatelessWidget {
             );
           },
           trailing: IconButton(
-              onPressed: () {
-                appState.removeFavorite(
-                    favorite['systemId'], favorite['talkgroups']);
+              onPressed: () async {
+                bool? confirmDelete = await showDialog(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return AlertDialog(
+                      title: Text("Confirm Deletion"),
+                      content: Text(
+                          "Are you sure you want to remove this favorite?"),
+                      actions: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(context).pop(false); // Cancel deletion
+                          },
+                          child: Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(context).pop(true); // Confirm deletion
+                          },
+                          child: Text("Delete"),
+                        ),
+                      ],
+                    );
+                  },
+                );
+
+                if (confirmDelete == true) {
+                  appState.removeFavorite(
+                      favorite['systemId'], favorite['talkgroups']);
+                }
               },
               icon: Icon(Icons.delete)),
         );
