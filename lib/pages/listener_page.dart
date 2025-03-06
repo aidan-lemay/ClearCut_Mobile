@@ -217,6 +217,13 @@ class _ListenerPageState extends State<ListenerPage> {
     }
   }
 
+  Future<void> _refreshCalls() async {
+    setState(() {
+      isLoading = true;
+    });
+    await fetchInitialCalls();
+  }
+
   @override
   Widget build(BuildContext context) {
     String formatTimestamp(int timestamp) {
@@ -260,92 +267,97 @@ class _ListenerPageState extends State<ListenerPage> {
               Center(child: CircularProgressIndicator())
             else
               Expanded(
-                child: ListView.builder(
-                  itemCount: callData.length + 1, // Add 1 for the button
-                  itemBuilder: (context, index) {
-                    if (index == callData.length) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16.0),
-                        child: Center(
-                          child: ElevatedButton(
-                            onPressed: fetchMoreCalls,
-                            child: isLoadingMore
-                                ? CircularProgressIndicator()
-                                : Text('Load More Calls'),
+                child: RefreshIndicator(
+                  onRefresh: _refreshCalls,
+                  child: ListView.builder(
+                    itemCount: callData.length + 1, // Add 1 for the button
+                    itemBuilder: (context, index) {
+                      if (index == callData.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16.0),
+                          child: Center(
+                            child: ElevatedButton(
+                              onPressed: fetchMoreCalls,
+                              child: isLoadingMore
+                                  ? CircularProgressIndicator()
+                                  : Text('Load More Calls'),
+                            ),
+                          ),
+                        );
+                      }
+
+                      final call = callData[index];
+                      final transcript = call['transcript'] ?? '';
+                      final transcriptText =
+                          transcript is String ? transcript : '';
+                      final callId = call['id'];
+
+                      if (!transcriptText
+                          .toLowerCase()
+                          .contains(transcriptQuery.toLowerCase())) {
+                        return SizedBox.shrink();
+                      }
+
+                      final talkgroupName =
+                          widget.selectedTalkgroups.firstWhere(
+                        (tg) => tg['id'] == call['talkgroup'],
+                        orElse: () => {'name': 'Unknown Talkgroup'},
+                      )['name'];
+
+                      return Card(
+                        margin: EdgeInsets.symmetric(vertical: 8),
+                        child: ListTile(
+                          title: Text(
+                            talkgroupName,
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              transcriptText.isNotEmpty
+                                  ? Text(transcriptText,
+                                      style: TextStyle(fontSize: 14))
+                                  : TextButton(
+                                      onPressed: callId != null &&
+                                              !transcribingCalls
+                                                  .contains(callId)
+                                          ? () => requestTranscription(callId)
+                                          : null, // Disable while transcribing
+                                      child: Text('Transcribe Call'),
+                                    ),
+                              SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Text(
+                                    call['startTime'] != null
+                                        ? formatTimestamp(call['startTime'])
+                                        : 'Loading...',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                  Text(
+                                    call['startTime'] != null
+                                        ? formatDuration(
+                                            call['endTime'], call['startTime'])
+                                        : 'Loading...',
+                                    style: TextStyle(
+                                        fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          trailing: IconButton(
+                            icon: Icon(Icons.play_arrow),
+                            onPressed: () {
+                              playAudio(call['audioFile']);
+                            },
                           ),
                         ),
                       );
-                    }
-
-                    final call = callData[index];
-                    final transcript = call['transcript'] ?? '';
-                    final transcriptText =
-                        transcript is String ? transcript : '';
-                    final callId = call['id'];
-
-                    if (!transcriptText
-                        .toLowerCase()
-                        .contains(transcriptQuery.toLowerCase())) {
-                      return SizedBox.shrink();
-                    }
-
-                    final talkgroupName = widget.selectedTalkgroups.firstWhere(
-                      (tg) => tg['id'] == call['talkgroup'],
-                      orElse: () => {'name': 'Unknown Talkgroup'},
-                    )['name'];
-
-                    return Card(
-                      margin: EdgeInsets.symmetric(vertical: 8),
-                      child: ListTile(
-                        title: Text(
-                          talkgroupName,
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            transcriptText.isNotEmpty
-                                ? Text(transcriptText,
-                                    style: TextStyle(fontSize: 14))
-                                : TextButton(
-                                    onPressed: callId != null &&
-                                            !transcribingCalls.contains(callId)
-                                        ? () => requestTranscription(callId)
-                                        : null, // Disable while transcribing
-                                    child: Text('Transcribe Call'),
-                                  ),
-                            SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Text(
-                                  call['startTime'] != null
-                                      ? formatTimestamp(call['startTime'])
-                                      : 'Loading...',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
-                                ),
-                                Text(
-                                  call['startTime'] != null
-                                      ? formatDuration(
-                                          call['endTime'], call['startTime'])
-                                      : 'Loading...',
-                                  style: TextStyle(
-                                      fontSize: 12, color: Colors.grey),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        trailing: IconButton(
-                          icon: Icon(Icons.play_arrow),
-                          onPressed: () {
-                            playAudio(call['audioFile']);
-                          },
-                        ),
-                      ),
-                    );
-                  },
+                    },
+                  ),
                 ),
               ),
             Center(
