@@ -24,6 +24,7 @@ class _ListenerPageState extends State<ListenerPage> {
   String transcriptQuery = '';
   late SSEService _sseService;
   late AudioPlayer _audioPlayer;
+  Set<String> transcribingCalls = {};
 
   @override
   void initState() {
@@ -171,6 +172,26 @@ class _ListenerPageState extends State<ListenerPage> {
     }
   }
 
+  Future<void> requestTranscription(String callId) async {
+    setState(() {
+      transcribingCalls.add(callId);
+    });
+
+    final response = await http.post(
+      Uri.parse('https://clearcutradio.app/api/v1/calls/transcribe?id=$callId'),
+    );
+
+    setState(() {
+      transcribingCalls.remove(callId);
+    });
+
+    if (response.statusCode == 200) {
+      print('Transcription requested successfully');
+    } else {
+      print('Failed to request transcription');
+    }
+  }
+
   void playAudio(String audioFile) async {
     const baseUrl = 'https://audio.clearcutradio.app/';
 
@@ -223,7 +244,7 @@ class _ListenerPageState extends State<ListenerPage> {
             SizedBox(height: 16),
             TextField(
               decoration: InputDecoration(
-                labelText: 'Search Transcripts',
+                labelText: 'Search Calls',
                 hintText: 'Enter keyword',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.search),
@@ -257,11 +278,10 @@ class _ListenerPageState extends State<ListenerPage> {
                     }
 
                     final call = callData[index];
-                    final transcript =
-                        call['transcript'] ?? 'No transcript available';
-
+                    final transcript = call['transcript'] ?? '';
                     final transcriptText =
                         transcript is String ? transcript : '';
+                    final callId = call['id'];
 
                     if (!transcriptText
                         .toLowerCase()
@@ -285,8 +305,16 @@ class _ListenerPageState extends State<ListenerPage> {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(transcriptText,
-                                style: TextStyle(fontSize: 14)),
+                            transcriptText.isNotEmpty
+                                ? Text(transcriptText,
+                                    style: TextStyle(fontSize: 14))
+                                : TextButton(
+                                    onPressed: callId != null &&
+                                            !transcribingCalls.contains(callId)
+                                        ? () => requestTranscription(callId)
+                                        : null, // Disable while transcribing
+                                    child: Text('Transcribe Call'),
+                                  ),
                             SizedBox(height: 10),
                             Row(
                               children: [
