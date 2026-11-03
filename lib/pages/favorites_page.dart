@@ -3,7 +3,47 @@ import 'package:clearcut_mobile/pages/listener_page.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+/// The app bar's favorites shortcut, shown on every page.
+class FavoritesToggleButton extends StatelessWidget {
+  final bool isShowingFavorites;
+  final VoidCallback onPressed;
+
+  FavoritesToggleButton({
+    required this.isShowingFavorites,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(isShowingFavorites ? Icons.favorite : Icons.favorite_border),
+      tooltip: 'Favorites',
+      onPressed: onPressed,
+    );
+  }
+}
+
 class FavoritesPage extends StatelessWidget {
+  /// Whether opening a favorite replaces the current page instead of going on
+  /// top of it.
+  final bool replacePageOnOpen;
+
+  FavoritesPage({this.replacePageOnOpen = false});
+
+  void _open(BuildContext context, Map<String, dynamic> favorite) {
+    final route = MaterialPageRoute(
+      builder: (context) => ListenerPage(
+        selectedTalkgroups: favorite['talkgroups'],
+        currentSystem: favorite['systemId'],
+      ),
+    );
+    if (replacePageOnOpen) {
+      Navigator.pushReplacement(context, route);
+    } else {
+      Navigator.push(context, route);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<MyAppState>();
@@ -14,28 +54,27 @@ class FavoritesPage extends StatelessWidget {
       );
     }
 
-    return ListView.builder(
+    return ReorderableListView.builder(
+      buildDefaultDragHandles: false,
       itemCount: appState.favorites.length,
+      // ignore: deprecated_member_use
+      onReorder: appState.moveFavorite, // Works on older Flutter versions too
       itemBuilder: (context, index) {
         final favorite = appState.favorites[index];
         final talkgroupNames =
             favorite['talkgroups'].map((tg) => tg['name']).join(', ');
+        final talkgroupIds = favorite['talkgroups'].map((tg) => tg['id']);
 
         return ListTile(
-          leading: Icon(Icons.favorite),
+          key: ValueKey('${favorite['systemId']}:${talkgroupIds.join(',')}'),
+          leading: ReorderableDragStartListener(
+            index: index,
+            child: Icon(Icons.drag_handle),
+          ),
           title: Text(talkgroupNames),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ListenerPage(
-                  selectedTalkgroups: favorite['talkgroups'],
-                  currentSystem: favorite['systemId'],
-                ),
-              ),
-            );
-          },
+          onTap: () => _open(context, favorite),
           trailing: IconButton(
+              tooltip: 'Remove favorite',
               onPressed: () async {
                 bool? confirmDelete = await showDialog(
                   context: context,

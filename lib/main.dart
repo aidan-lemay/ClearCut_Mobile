@@ -7,6 +7,11 @@ import 'package:collection/collection.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
+const apiTimeout = Duration(seconds: 15);
+
+// A transcribe request may not return until the server has finished the work.
+const transcribeTimeout = Duration(seconds: 90);
+
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/[SYSTEM NAME]/[TGID]/[FILE NAME]
 URL: https://clearcutradio.app
@@ -30,28 +35,24 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (context) => MyAppState(),
-      child: Consumer<MyAppState>(
-        builder: (context, appState, _) {
-          return MaterialApp(
-            title: 'Clearcut Mobile',
-            themeMode: ThemeMode.dark,
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.greenAccent,
-                brightness: Brightness.dark,
-              ),
-              textTheme: ThemeData.light().textTheme,
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.greenAccent,
-                brightness: Brightness.dark,
-              ),
-              textTheme: ThemeData.dark().textTheme,
-            ),
-            home: MySystemsPage(),
-          );
-        },
+      child: MaterialApp(
+        title: 'Clearcut Mobile',
+        themeMode: ThemeMode.dark,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.greenAccent,
+            brightness: Brightness.dark,
+          ),
+          textTheme: ThemeData.light().textTheme,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.greenAccent,
+            brightness: Brightness.dark,
+          ),
+          textTheme: ThemeData.dark().textTheme,
+        ),
+        home: MySystemsPage(),
       ),
     );
   }
@@ -60,6 +61,7 @@ class MyApp extends StatelessWidget {
 class MyAppState extends ChangeNotifier {
   dynamic current;
   List<dynamic>? apiData;
+  bool systemsFailed = false;
   var favorites = <Map<String, dynamic>>[];
 
   MyAppState() {
@@ -68,27 +70,34 @@ class MyAppState extends ChangeNotifier {
   }
 
   Future<void> fetchSystems() async {
+    systemsFailed = false;
+    notifyListeners();
+
     try {
-      final response =
-          await http.get(Uri.parse('https://clearcutradio.app/api/v1/systems'));
+      final response = await http
+          .get(Uri.parse('https://clearcutradio.app/api/v1/systems'))
+          .timeout(apiTimeout);
 
       if (response.statusCode == 200) {
         apiData = json.decode(response.body);
-        notifyListeners();
       } else {
         throw Exception('Failed to load data');
       }
     } catch (error) {
       print('Error fetching API data: $error');
+      systemsFailed = true;
     }
+    notifyListeners();
   }
 
   Future<List<dynamic>> fetchTalkgroups(String systemId) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-            'https://clearcutradio.app/api/v1/talkgroups?system=$systemId'),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+                'https://clearcutradio.app/api/v1/talkgroups?system=$systemId'),
+          )
+          .timeout(apiTimeout);
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
@@ -106,13 +115,26 @@ class MyAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addFavorite(String systemId, List<dynamic> talkgroups) {
-    bool alreadyExists = favorites.any((favorite) {
-      return favorite['systemId'] == systemId &&
-          ListEquality().equals(favorite['talkgroups'], talkgroups);
-    });
+  // Talkgroups are compared by ID: the same talkgroup is a different Map object
+  // each time it's fetched or loaded from storage, and its other fields change.
+  bool _isSameFavorite(
+    Map<String, dynamic> favorite,
+    String systemId,
+    List<dynamic> talkgroups,
+  ) {
+    Set<dynamic> ids(List<dynamic> list) => list.map((tg) => tg['id']).toSet();
+    return favorite['systemId'] == systemId &&
+        const SetEquality()
+            .equals(ids(favorite['talkgroups']), ids(talkgroups));
+  }
 
-    if (!alreadyExists) {
+  bool isFavorite(String systemId, List<dynamic> talkgroups) {
+    return favorites
+        .any((favorite) => _isSameFavorite(favorite, systemId, talkgroups));
+  }
+
+  void addFavorite(String systemId, List<dynamic> talkgroups) {
+    if (!isFavorite(systemId, talkgroups)) {
       favorites.add({'systemId': systemId, 'talkgroups': talkgroups});
       saveFavorites();
       notifyListeners();
@@ -122,9 +144,17 @@ class MyAppState extends ChangeNotifier {
   }
 
   void removeFavorite(String systemId, List<dynamic> talkgroups) {
-    favorites.removeWhere((favorite) =>
-        favorite['systemId'] == systemId &&
-        ListEquality().equals(favorite['talkgroups'], talkgroups));
+    favorites.removeWhere(
+        (favorite) => _isSameFavorite(favorite, systemId, talkgroups));
+    saveFavorites();
+    notifyListeners();
+  }
+
+  /// Moves a favorite, with indexes as given by ReorderableListView: [newIndex]
+  /// is counted before the item is taken out of the list.
+  void moveFavorite(int oldIndex, int newIndex) {
+    final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
+    favorites.insert(target, favorites.removeAt(oldIndex));
     saveFavorites();
     notifyListeners();
   }
@@ -144,7 +174,18 @@ class MyAppState extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final favoritesJson = prefs.getString('favorites');
       if (favoritesJson != null) {
-        favorites = List<Map<String, dynamic>>.from(jsonDecode(favoritesJson));
+        final stored =
+            List<Map<String, dynamic>>.from(jsonDecode(favoritesJson));
+
+        // Earlier versions could save the same favorite more than once.
+        favorites = [];
+        for (final favorite in stored) {
+          if (!isFavorite(favorite['systemId'], favorite['talkgroups'])) {
+            favorites.add(favorite);
+          }
+        }
+        if (favorites.length != stored.length) await saveFavorites();
+
         notifyListeners();
       }
     } catch (error) {

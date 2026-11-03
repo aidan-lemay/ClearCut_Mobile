@@ -31,9 +31,11 @@ class _MySystemsPageState extends State<MySystemsPage> {
         throw UnimplementedError('No widget for $selectedIndex');
     }
 
+    const pageTitles = ['Systems', 'Favorites', 'Info', 'Advanced Search'];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Systems'),
+        title: Text(showFavorites ? 'Favorites' : pageTitles[selectedIndex]),
         leading: Builder(
           builder: (context) => IconButton(
             icon: Icon(Icons.menu),
@@ -41,16 +43,18 @@ class _MySystemsPageState extends State<MySystemsPage> {
           ),
         ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.all(10.0),
-            child: IconButton(
-              icon: Icon(Icons.favorite),
-              onPressed: () {
-                setState(() {
+          FavoritesToggleButton(
+            isShowingFavorites: showFavorites || selectedIndex == 1,
+            onPressed: () {
+              setState(() {
+                if (selectedIndex == 1) {
+                  selectedIndex = 0; // Already on Favorites via the drawer
+                  showFavorites = false;
+                } else {
                   showFavorites = !showFavorites; // Toggle view
-                });
-              },
-            ),
+                }
+              });
+            },
           ),
         ],
       ),
@@ -76,6 +80,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
               onTap: () {
                 setState(() {
                   selectedIndex = 0;
+                  showFavorites = false;
                 });
                 Navigator.pop(context);
               },
@@ -86,6 +91,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
               onTap: () {
                 setState(() {
                   selectedIndex = 1;
+                  showFavorites = false;
                 });
                 Navigator.pop(context);
               },
@@ -106,6 +112,7 @@ class _MySystemsPageState extends State<MySystemsPage> {
               onTap: () {
                 setState(() {
                   selectedIndex = 2;
+                  showFavorites = false;
                 });
                 Navigator.pop(context);
               },
@@ -122,36 +129,52 @@ class SystemsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<MyAppState>();
+    final systems = appState.apiData;
+
+    if (systems == null) {
+      return Center(
+        child: appState.systemsFailed
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("Couldn't load systems."),
+                  SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: appState.fetchSystems,
+                    child: Text('Retry'),
+                  ),
+                ],
+              )
+            : CircularProgressIndicator(),
+      );
+    }
 
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: ListView(
+        shrinkWrap: true,
         children: [
-          if (appState.apiData != null)
-            ...appState.apiData!.map((x) {
-              return Padding(
-                padding: const EdgeInsets.all(10.0),
-                child: ListTile(
-                  shape: RoundedRectangleBorder(
-                    side: BorderSide(color: Colors.white, width: 1),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  contentPadding: EdgeInsets.all(3),
-                  horizontalTitleGap: 10,
-                  title: Text(x['name']),
-                  onTap: () {
-                    appState.setCurrent(x);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => TalkgroupsPage(),
-                      ),
-                    );
-                  },
+          for (final x in systems)
+            Padding(
+              padding: const EdgeInsets.all(10.0),
+              child: ListTile(
+                shape: RoundedRectangleBorder(
+                  side: BorderSide(color: Colors.white, width: 1),
+                  borderRadius: BorderRadius.circular(5),
                 ),
-              );
-            }).toList(),
-          if (appState.apiData == null) CircularProgressIndicator(),
+                contentPadding: EdgeInsets.all(3),
+                horizontalTitleGap: 10,
+                title: Text(x['name']),
+                onTap: () {
+                  appState.setCurrent(x);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => TalkgroupsPage(),
+                    ),
+                  );
+                },
+              ),
+            ),
         ],
       ),
     );
