@@ -11,7 +11,7 @@ These steps build the Android app, the only platform that's released. They were 
 You need:
 
 - **[Flutter](https://docs.flutter.dev/get-started/install)**, stable channel. The project needs a current version: Flutter refuses to build with older Gradle settings, and older Flutter versions may not accept the newer ones used here.
-- **JDK 17.** Newer isn't better here: Gradle 8.14 can't run on the newest JDKs, even if one is your system default.
+- **JDK 17.** Newer isn't better here: the Gradle version this project uses can't run on the newest JDKs, even if one is your system default.
 - **Android SDK**, from [Android Studio](https://developer.android.com/studio) or the [command line tools](https://developer.android.com/studio#command-line-tools-only). Install `platform-tools`, `platforms;android-36`, and `build-tools;36.0.0`. Gradle downloads anything else it needs, such as the NDK and CMake, during the first build.
 
 On Arch Linux, JDK 17 and `adb` are available with:
