@@ -3,7 +3,7 @@ description: A native Android companion to https://clearcutradio.app/
 
 publish_to: 'none'
 
-version: 0.0.1+1
+version: 2.7.0
 
 environment:
   sdk: ^3.1.1
@@ -16,7 +16,6 @@ dependencies:
   collection: ^1.17.0
   shared_preferences: ^2.0.15
 
-  english_words: ^4.0.0
   provider: ^6.0.0
   url_launcher: ^6.3.1
 
@@ -24,7 +23,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
-  flutter_lints: ^2.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
