@@ -101,9 +101,10 @@ class FcmPushSender extends PushSender {
       }
 
       if (response.statusCode == 200) return PushResult.sent;
-      if (response.statusCode == 404 ||
-          response.body.contains('UNREGISTERED') ||
-          response.body.contains('registration token is not a valid')) {
+
+      final error = FcmError.parse(response.statusCode, response.body);
+      if (error.tokenIsDead) {
+        print('Firebase rejected a push token: $error');
         return PushResult.invalidToken;
       }
       final retryable =
@@ -112,11 +113,61 @@ class FcmPushSender extends PushSender {
         await Future.delayed(Duration(seconds: attempt * 2));
         continue;
       }
-      print('Push failed with ${response.statusCode}: ${response.body}');
+      print('Push failed: $error${error.hint}');
       return PushResult.failed;
     }
   }
 
   @override
   void close() => _client.close();
+}
+
+/// An error response from FCM's send API.
+class FcmError {
+  final int status;
+
+  /// Such as `UNREGISTERED`, `SENDER_ID_MISMATCH` or `INVALID_ARGUMENT`.
+  final String code;
+  final String message;
+
+  FcmError(this.status, this.code, this.message);
+
+  factory FcmError.parse(int status, String body) {
+    var code = '';
+    var message = body;
+    try {
+      final error = (jsonDecode(body) as Map)['error'] as Map;
+      message = '${error['message'] ?? ''}';
+      code = '${error['status'] ?? ''}';
+      for (final detail in error['details'] as List? ?? []) {
+        if (detail is Map && detail['errorCode'] is String) {
+          code = detail['errorCode'];
+        }
+      }
+    } catch (_) {
+      // Not FCM's usual error shape; keep the raw body as the message.
+    }
+    return FcmError(status, code, message);
+  }
+
+  /// Only these mean the phone's token will never work again, so the phone
+  /// can be forgotten. Anything else, like a misconfigured Firebase project,
+  /// is the relay's problem and mustn't remove phones.
+  bool get tokenIsDead =>
+      code == 'UNREGISTERED' ||
+      (code == 'INVALID_ARGUMENT' &&
+          message.toLowerCase().contains('registration token'));
+
+  String get hint => switch (code) {
+    'SENDER_ID_MISMATCH' =>
+      '. The Firebase key in the relay is from a '
+          'different Firebase project than the app\'s google-services.json.',
+    'THIRD_PARTY_AUTH_ERROR' || 'PERMISSION_DENIED' =>
+      '. Check that the Firebase Cloud Messaging API (V1) is enabled for '
+          'the project.',
+    _ => '',
+  };
+
+  @override
+  String toString() => '$status $code: $message';
 }

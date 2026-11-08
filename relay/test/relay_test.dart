@@ -162,6 +162,67 @@ void main() {
     });
   });
 
+  group('firebase errors', () {
+    String body(String status, String? errorCode, String message) => jsonEncode(
+      {
+        'error': {
+          'code': 400,
+          'message': message,
+          'status': status,
+          'details': [
+            if (errorCode != null)
+              {
+                '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError',
+                'errorCode': errorCode,
+              },
+          ],
+        },
+      },
+    );
+
+    test('only unregistered or malformed tokens drop a phone', () {
+      expect(
+        FcmError.parse(
+          404,
+          body('NOT_FOUND', 'UNREGISTERED', 'Requested entity was not found.'),
+        ).tokenIsDead,
+        isTrue,
+      );
+      expect(
+        FcmError.parse(
+          400,
+          body(
+            'INVALID_ARGUMENT',
+            'INVALID_ARGUMENT',
+            'The registration token is not a valid FCM registration token',
+          ),
+        ).tokenIsDead,
+        isTrue,
+      );
+
+      final mismatch = FcmError.parse(
+        403,
+        body('PERMISSION_DENIED', 'SENDER_ID_MISMATCH', 'SenderId mismatch'),
+      );
+      expect(mismatch.tokenIsDead, isFalse);
+      expect(mismatch.hint, contains('different Firebase project'));
+
+      // A bare 404, such as a wrong project in the URL, isn't the phone's fault.
+      expect(FcmError.parse(404, 'Not Found').tokenIsDead, isFalse);
+      expect(
+        FcmError.parse(
+          400,
+          body(
+            'INVALID_ARGUMENT',
+            'INVALID_ARGUMENT',
+            'Invalid data payload key',
+          ),
+        ).tokenIsDead,
+        isFalse,
+      );
+    });
+  });
+
   group('rules from the app', () {
     void rejects(Map<String, dynamic> json, String reason) {
       expect(
