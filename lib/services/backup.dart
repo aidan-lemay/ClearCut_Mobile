@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:clearcut_core/call_utils.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
+
+export 'package:clearcut_core/call_utils.dart' show isValidSystemId;
 import 'package:file_picker/file_picker.dart';
 
 /// Backup files are JSON, marked with this format name and a kind, so that a
@@ -69,6 +72,7 @@ List<Map<String, dynamic>> parseFavoritesBackup(String text) {
   for (final favorite in list) {
     if (favorite is! Map ||
         favorite['systemId'] is! String ||
+        !isValidSystemId(favorite['systemId']) ||
         favorite['talkgroups'] is! List ||
         (favorite['talkgroups'] as List).isEmpty) {
       throw damaged;
@@ -137,8 +141,6 @@ SettingsBackup parseSettingsBackup(String text) {
       hiddenSystems: hiddenSystems, notifications: notifications);
 }
 
-/// System IDs go straight into API URLs, so only plain characters are allowed.
-bool isValidSystemId(String id) => RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(id);
 
 /// Where backups are saved to and loaded from. Swapped out in tests.
 abstract class BackupFiles {

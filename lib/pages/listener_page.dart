@@ -541,7 +541,7 @@ class _ListenerPageState extends State<ListenerPage>
                                 widget.selectedTalkgroups);
                             _showMessage('Added to favorites!');
                           },
-                          child: Text('Add Talkgroup(s) to Favorites'),
+                          child: Text('Add to Favorites'),
                         ),
                       ),
                     ),

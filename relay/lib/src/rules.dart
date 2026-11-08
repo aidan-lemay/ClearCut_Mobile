@@ -18,6 +18,10 @@ const maxRulesPerDevice = 50;
 const maxTalkgroupsPerRule = 1000;
 const maxKeywordsPerRule = 50;
 
+/// Each system is a separate Clearcut connection, so this keeps one phone
+/// from opening dozens.
+const maxSystemsPerDevice = 10;
+
 class Rule {
   final String id;
   final String name;

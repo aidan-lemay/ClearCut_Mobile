@@ -170,45 +170,49 @@ class SystemsPage extends StatelessWidget {
       if (systems.isEmpty) return Center(child: status);
     }
 
-    return Center(
-      child: ListView(
-        shrinkWrap: true,
-        children: [
-          if (status != null)
-            Padding(
-              padding: const EdgeInsets.all(10.0),
-              child: Center(child: status),
-            ),
-          for (final x in systems)
-            Padding(
-              padding: const EdgeInsets.all(10.0),
-              child: ListTile(
-                shape: RoundedRectangleBorder(
-                  side: BorderSide(color: Colors.white, width: 1),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                contentPadding: EdgeInsets.all(3),
-                horizontalTitleGap: 10,
-                title: Text(x['name']),
-                trailing: x['hidden'] == true
-                    ? Tooltip(
-                        message: 'Hidden system',
-                        child: Icon(Icons.visibility_off),
-                      )
-                    : null,
-                onTap: () {
-                  appState.setCurrent(x);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => TalkgroupsPage(),
-                    ),
-                  );
-                },
+    final outline = Theme.of(context).colorScheme.outlineVariant;
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        if (status != null)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(child: status),
+          ),
+        for (final x in systems)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: ListTile(
+              shape: RoundedRectangleBorder(
+                side: BorderSide(color: outline),
+                borderRadius: BorderRadius.circular(12),
               ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              title: Text(x['name']),
+              subtitle: x['hidden'] == true
+                  ? Text('Hidden system')
+                  : (x['description'] as String?)?.trim().isNotEmpty == true
+                      ? Text(x['description'])
+                      : null,
+              trailing: x['hidden'] == true
+                  ? Tooltip(
+                      message: 'Hidden system',
+                      child: Icon(Icons.visibility_off),
+                    )
+                  : Icon(Icons.chevron_right),
+              onTap: () {
+                appState.setCurrent(x);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => TalkgroupsPage(),
+                  ),
+                );
+              },
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

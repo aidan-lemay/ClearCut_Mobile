@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:flutter/material.dart';
@@ -428,6 +430,28 @@ class _RuleEditorPageState extends State<RuleEditorPage> {
       }
       _loadTalkgroups();
     }
+    _initial = _snapshot();
+  }
+
+  /// What the rule looked like when the page opened, to tell whether leaving
+  /// would lose changes.
+  late final String _initial;
+
+  String _snapshot() => jsonEncode([
+        _name.text.trim(),
+        _keywords.text.trim(),
+        _mode.name,
+        _systemId,
+        _selected.keys.toList()..sort(),
+      ]);
+
+  Future<void> _leave() async {
+    final navigator = Navigator.of(context);
+    if (_snapshot() == _initial ||
+        await _confirm(context, 'Discard changes?',
+            'Your changes to this rule haven\'t been saved.', 'Discard')) {
+      navigator.pop();
+    }
   }
 
   @override
@@ -525,6 +549,17 @@ class _RuleEditorPageState extends State<RuleEditorPage> {
         .toList();
     final theme = Theme.of(context);
 
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _leave();
+      },
+      child: _buildPage(context, systems, favorites, theme),
+    );
+  }
+
+  Widget _buildPage(BuildContext context, List<Map<String, dynamic>> systems,
+      List<Map<String, dynamic>> favorites, ThemeData theme) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.rule == null ? 'New Rule' : 'Edit Rule'),
@@ -734,6 +769,8 @@ class _RuleEditorPageState extends State<RuleEditorPage> {
             itemBuilder: (context, index) {
               final tg = shown[index];
               return CheckboxListTile(
+                // Same layout as the Talkgroups page.
+                controlAffinity: ListTileControlAffinity.leading,
                 value: _selected.containsKey(tg['id']),
                 onChanged: (value) => _toggle(tg, value ?? false),
                 title: Text(tg['name']),

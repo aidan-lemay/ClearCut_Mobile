@@ -363,6 +363,22 @@ void main() {
       expect(running(), isEmpty);
     });
 
+    test('many matching rules still fit in one push', () async {
+      addDevice('d1', [
+        for (var i = 0; i < 50; i++)
+          ruleJson(
+            id: 'r$i',
+            name: 'A rule with a long name, number $i' * 2,
+            mode: 'keywords',
+            keywords: ['fire', 'keyword$i'],
+          ),
+      ]);
+      await relay.handleEvent('sys', transcript('c1', 1, 'fire ' * 1000));
+      final data = push.sent.single.$2;
+      expect(data['rules']!.length, lessThanOrEqualTo(200));
+      expect(utf8.encode(jsonEncode(data)).length, lessThan(4096 - 200));
+    });
+
     test('malformed events are ignored', () async {
       addDevice('d1', [ruleJson()]);
       await relay.handleEvent('sys', {'upload': 'nope'});
@@ -474,6 +490,49 @@ void main() {
         contains('pausedUntil'),
       );
       expect(store.devices, isEmpty);
+    });
+
+    test('one key can only register so many phones', () async {
+      final limited = buildApi(relay, maxDevicesPerKey: 2);
+      Future<int> register(String id) async => (await limited(
+        Request(
+          'PUT',
+          Uri.parse('http://relay/v1/devices/$id'),
+          headers: {'authorization': 'Bearer $alice'},
+          body: jsonEncode(setup()),
+        ),
+      )).statusCode;
+
+      expect(await register('aaaaaaaaaaaaaaaa1'), 200);
+      expect(await register('aaaaaaaaaaaaaaaa2'), 200);
+      expect(await register('aaaaaaaaaaaaaaaa3'), 403);
+      // Updating an existing phone is still fine.
+      expect(await register('aaaaaaaaaaaaaaaa1'), 200);
+    });
+
+    test('rules can only cover so many systems, and pauses are sane', () async {
+      final rules = [
+        for (var i = 0; i <= maxSystemsPerDevice; i++)
+          ruleJson(id: 'r$i', system: 'sys$i'),
+      ];
+      final (status, body) = await call(
+        'PUT',
+        device,
+        key: alice,
+        body: setup(rules: rules),
+      );
+      expect(status, 400);
+      expect(body['error'], contains('systems'));
+
+      for (final until in [-1, 99999999999999, 'soon']) {
+        final (status, _) = await call(
+          'PUT',
+          device,
+          key: alice,
+          body: {...setup(), 'paused': true, 'pausedUntil': until},
+        );
+        expect(status, 400);
+      }
     });
 
     test('a test push reaches the phone', () async {

@@ -346,7 +346,9 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: Icon(Icons.visibility_off),
             title: Text(MyAppState.hiddenSystemName(system)),
-            subtitle: Text('ID: ${system['id']}'),
+            subtitle: (system['name'] as String? ?? '').trim().isEmpty
+                ? null
+                : Text('ID: ${system['id']}'),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

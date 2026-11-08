@@ -42,6 +42,11 @@ EventStream clearcutStream(
 /// 4 KB message limit.
 const maxPushText = 1500;
 
+/// Shortens [text] so many matched rules can't push a message past FCM's
+/// 4 KB limit, which would make the push fail.
+String _cap(String text, int length) =>
+    text.length > length ? '${text.substring(0, length - 1)}…' : text;
+
 /// How many recent calls are remembered, to link transcripts and re-uploads
 /// back to the call they belong to.
 const _recentCallLimit = 5000;
@@ -220,15 +225,17 @@ class Relay {
         'notificationId': rootId,
         'systemId': system,
         'talkgroupId': '$talkgroup',
-        'talkgroupName':
-            talkgroupName ??
-            matched.first.talkgroups[talkgroup] ??
-            'Talkgroup $talkgroup',
+        'talkgroupName': _cap(
+          talkgroupName ??
+              matched.first.talkgroups[talkgroup] ??
+              'Talkgroup $talkgroup',
+          200,
+        ),
         'text': text.length > maxPushText
             ? '${text.substring(0, maxPushText)}…'
             : text,
-        'rules': matched.map((rule) => rule.name).join(', '),
-        'keywords': keywords.join(', '),
+        'rules': _cap(matched.map((rule) => rule.name).join(', '), 200),
+        'keywords': _cap(keywords.join(', '), 200),
         if (startTime != null) 'startTime': '$startTime',
       };
       sends.add(sendTo(device, data));

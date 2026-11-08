@@ -84,7 +84,12 @@ Future<Object?> _readJson(Request request) async {
   return (device, null);
 }
 
-Handler buildApi(Relay relay) {
+/// The latest pause end accepted, so a bad value can't overflow a date.
+const _maxPausedUntil = 4102444800; // 2100-01-01
+
+/// [maxDevicesPerKey] limits how many phones one key can register, so a
+/// leaked key can't be used to open unlimited Clearcut connections.
+Handler buildApi(Relay relay, {int maxDevicesPerKey = 10}) {
   final router = Router();
 
   router.get('/healthz', (Request request) => _json(200, {'ok': true}));
@@ -131,9 +136,21 @@ Handler buildApi(Relay relay) {
     } on FormatException catch (error) {
       return _error(400, error.message);
     }
+    final systems = rules.map((rule) => rule.systemId).toSet();
+    if (systems.length > maxSystemsPerDevice) {
+      return _error(
+        400,
+        'Rules can cover at most $maxSystemsPerDevice '
+        'systems.',
+      );
+    }
     final paused = body['paused'] ?? false;
     final pausedUntilRaw = body['pausedUntil'];
-    if (paused is! bool || (pausedUntilRaw != null && pausedUntilRaw is! int)) {
+    if (paused is! bool ||
+        (pausedUntilRaw != null &&
+            (pausedUntilRaw is! int ||
+                pausedUntilRaw < 0 ||
+                pausedUntilRaw > _maxPausedUntil))) {
       return _error(
         400,
         'paused must be true or false, and pausedUntil a '
@@ -156,6 +173,17 @@ Handler buildApi(Relay relay) {
         ..pausedUntil = pausedUntil
         ..updated = time;
     } else {
+      final keyId = _keyOf(request).id;
+      final count = relay.store.devices.values
+          .where((device) => device.keyId == keyId)
+          .length;
+      if (count >= maxDevicesPerKey) {
+        return _error(
+          403,
+          'This access key already has $maxDevicesPerKey phones registered. '
+          'Unsubscribe one of them, or ask for another key.',
+        );
+      }
       relay.store.devices[id] = Device(
         id: id,
         keyId: _keyOf(request).id,

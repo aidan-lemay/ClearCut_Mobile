@@ -5,6 +5,7 @@ import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/favorites_page.dart';
 import 'package:clearcut_mobile/pages/info_page.dart';
 import 'package:clearcut_mobile/pages/listener_page.dart';
+import 'package:clearcut_mobile/pages/notification_settings.dart';
 import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/systems_page.dart';
 import 'package:clearcut_mobile/services/backup.dart';
@@ -233,6 +234,19 @@ void main() {
           () => parseSettingsBackup(exportSettings(hiddenSystems: [
                 {'id': 'a/b?c', 'name': ''}
               ])),
+          refusedWith('damaged'));
+
+      // System IDs end up in request URLs, so odd ones are refused.
+      final sneaky = jsonDecode(exportFavorites([favoriteOf(1)]));
+      sneaky['favorites'][0]['systemId'] = 'sys&talkgroup=1';
+      expect(() => parseFavoritesBackup(jsonEncode(sneaky)),
+          refusedWith('damaged'));
+      expect(
+          () => parseSettingsBackup(exportSettings(hiddenSystems: [], notifications: {
+                'rules': [
+                  {...alertRule().toJson(), 'systemId': '../x'}
+                ]
+              })),
           refusedWith('damaged'));
     });
   });
@@ -953,7 +967,7 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text('Added very-bad to the Systems page.'),
               findsOneWidget);
-          expect(find.text('ID: very-bad'), findsOneWidget);
+          expect(find.widgetWithText(ListTile, 'very-bad'), findsOneWidget);
 
           await tester.tap(find.byIcon(Icons.menu));
           await tester.pumpAndSettle();
@@ -1248,6 +1262,49 @@ void main() {
           expect(find.text('Enter at least one keyword.'), findsOneWidget);
           expect(controller.rules, isEmpty);
           await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('leaving a changed rule asks first', (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await tester.pumpWidget(ChangeNotifierProvider(
+            create: (_) => MyAppState(push: FakePush()),
+            child: MaterialApp(
+              home: Builder(
+                builder: (context) => TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => RuleEditorPage())),
+                  child: Text('open'),
+                ),
+              ),
+            ),
+          ));
+          await tester.tap(find.text('open'));
+          await tester.pumpAndSettle();
+
+          // Nothing changed, so it just closes.
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+          expect(find.byType(RuleEditorPage), findsNothing);
+
+          await tester.tap(find.text('open'));
+          await tester.pumpAndSettle();
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Keywords'), 'fire');
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+          expect(find.text('Discard changes?'), findsOneWidget);
+          await tester.tap(find.text('Cancel'));
+          await tester.pumpAndSettle();
+          expect(find.byType(RuleEditorPage), findsOneWidget);
+
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Discard'));
+          await tester.pumpAndSettle();
+          expect(find.byType(RuleEditorPage), findsNothing);
         }, () => api.client);
       });
 
@@ -1634,9 +1691,9 @@ void main() {
         await http.runWithClient(() async {
           await pumpApp(tester,
               ListenerPage(selectedTalkgroups: selected, currentSystem: 'sys'));
-          await tester.tap(find.text('Add Talkgroup(s) to Favorites'));
+          await tester.tap(find.text('Add to Favorites'));
           await tester.pump();
-          expect(find.text('Add Talkgroup(s) to Favorites'), findsNothing);
+          expect(find.text('Add to Favorites'), findsNothing);
 
           await leave(tester);
         }, () => api.client);

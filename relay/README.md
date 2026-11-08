@@ -72,20 +72,108 @@ Then select **Connect**, send a test notification, and add alert rules.
 
 ## Reaching the relay
 
-The relay itself only serves plain HTTP. For phones away from home, put it behind something that adds HTTPS, so access keys aren't sent in the clear:
-
-- **A reverse proxy** with a certificate, such as [Caddy](https://caddyserver.com). Point a domain at your home's IP address, forward ports 80 and 443 to the server, and use this Caddyfile, which gets a certificate automatically:
-
-  ```
-  relay.example.com {
-      reverse_proxy localhost:8080
-  }
-  ```
-
-  Phones then use `relay.example.com` with no port.
-- **A tunnel**, such as Cloudflare Tunnel or Tailscale Funnel, if you'd rather not open ports.
+The relay itself only serves plain HTTP. For phones away from home, put it behind something that adds HTTPS, so access keys aren't sent in the clear. Phones then use the relay's domain with no port.
 
 On your home network you can skip HTTPS and enter `http://<server-ip>` with port `8080`. The app warns that the key is sent unencrypted.
+
+### Cloudflare Tunnel
+
+A tunnel gives the relay an HTTPS address without opening ports. You need a domain whose DNS is on Cloudflare.
+
+1. In the Cloudflare dashboard, open **Zero Trust > Networks > Tunnels** and create a **Cloudflared** tunnel. From its install instructions, copy the token after `--token`; you don't need to run the commands.
+2. Add a **public hostname** to the tunnel, such as `relay.example.com`, with service type **HTTP** and URL `relay:8080`.
+3. In the `relay` folder on the server, create `.env`:
+
+   ```
+   TUNNEL_TOKEN=eyJ...
+   ```
+
+   and `docker-compose.override.yml`, which Docker Compose merges with `docker-compose.yml` automatically:
+
+   ```yaml
+   services:
+     cloudflared:
+       image: cloudflare/cloudflared:2026.10.3
+       container_name: clearcut-relay-tunnel
+       restart: unless-stopped
+       command: tunnel --no-autoupdate run
+       environment:
+         TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+       depends_on:
+         - relay
+   ```
+
+4. Run `chmod 600 .env`, then `docker compose up -d`. `docker compose logs cloudflared` should show `Registered tunnel connection`.
+
+The token lets anyone run your tunnel, so keep `.env` on the server. Both files are untracked, so `git pull` leaves them alone.
+
+Two Cloudflare features can block the app:
+
+- **Bot Fight Mode** (Security > Bots) may answer the app with a challenge page meant for browsers. The app then says the address doesn't look like a Clearcut relay. Turn it off for the relay's hostname, for example with a WAF rule that skips bot protection there.
+- **Cloudflare Access** login pages can't be used by the app. Don't put Access in front of the relay; its access keys already protect it.
+
+### nginx
+
+To serve the relay behind nginx, which can itself sit behind a Cloudflare Tunnel:
+
+```nginx
+server {
+    listen 80;
+    server_name relay.example.com;
+
+    # The relay refuses request bodies over 512 KB anyway.
+    client_max_body_size 1m;
+
+    location / {
+        # nginx in Docker, on the same network as the relay:
+        proxy_pass http://clearcut-relay:8080;
+        # nginx installed on the host:
+        # proxy_pass http://127.0.0.1:8080;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Add a `listen 443 ssl` block with your certificate if nginx terminates HTTPS itself. nginx passes the `Authorization` header through by default; don't strip it, since it carries the access key.
+
+### Caddy
+
+Point a domain at your home's IP address, forward ports 80 and 443 to the server, and use this Caddyfile, which gets a certificate automatically:
+
+```
+relay.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+### Running the relay in an existing Compose file
+
+To run the relay alongside other services instead of with its own `docker-compose.yml`, add this service to your Compose file, adjusting the paths to where the repository is cloned:
+
+```yaml
+  clearcut-relay:
+    build:
+      context: /root/ClearCut_Mobile      # the repository root, not relay/
+      dockerfile: relay/Dockerfile
+    image: clearcut-relay
+    container_name: clearcut-relay
+    restart: unless-stopped
+    volumes:
+      - /root/ClearCut_Mobile/relay/data:/data
+    # Reachable only from containers on the same network, such as nginx or
+    # cloudflared. If nginx runs on the host, use this instead of "expose":
+    #   ports:
+    #     - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
+```
+
+The build context must be the repository root, because the image also includes `packages/clearcut_core`. Stop the relay's own Compose setup first (`docker compose down` in `relay/`), so two relays don't share the data folder. Update with `git pull`, then `docker compose up -d --build clearcut-relay`.
 
 ## Updating and backups
 
@@ -95,6 +183,29 @@ docker compose up -d --build
 ```
 
 Everything the relay keeps is in `relay/data`: `keys.json`, `devices.json` and the Firebase key. Back up that folder to keep keys and registered phones. If `devices.json` is lost, phones re-register the next time their notification settings change or the app restarts.
+
+## Security
+
+- **Access keys** are 256-bit random values. The relay stores only their SHA-256 hashes, so `keys.json` doesn't give anyone access. Each phone stays tied to the key it registered with, so one person can't change or remove another person's phone.
+- **Limits:** a key can register up to 10 phones (`RELAY_MAX_DEVICES_PER_KEY`), each with up to 50 rules covering up to 10 systems. Requests over 512 KB are refused. These stop a leaked key from making the relay open unlimited Clearcut connections. If a key leaks, revoke it.
+- **The Firebase service account key** can send notifications to every phone with the app. Keep it only in `relay/data`, and restrict the folder: `chmod 700 relay/data`.
+- **HTTPS:** the relay serves plain HTTP, so put HTTPS in front of it (see [Reaching the relay](#reaching-the-relay)) for anything beyond your home network.
+- **Logs** include phone IDs, key names, and the start of push tokens, but never access keys.
+- **The container** has no shell or other programs, only the relay itself.
+
+## Troubleshooting
+
+All of these start with `docker compose logs relay`.
+
+| What you see | What it means |
+|---|---|
+| `pushes are only logged, not sent` | `data/firebase-service-account.json` is missing. Add it and run `docker compose restart`. |
+| `Push failed with 403` or `401` | The Firebase key is from a different project than the app's `google-services.json`, or the Cloud Messaging API is turned off. |
+| `Removing device ...: its push token is no longer valid` | That phone uninstalled the app or reset its push registration. It re-registers when the app next opens. |
+| `SSE error: ... Connection closed` every couple of minutes | Normal. Clearcut drops quiet streams, and the relay reconnects. |
+| The app says the key wasn't accepted | The key was revoked or mistyped. `relay keys list` shows the keys that exist. |
+| The app says the address doesn't look like a relay | Something else answered: check the proxy or tunnel settings and Cloudflare's bot protection. `curl https://relay.example.com/healthz` should print `{"ok":true}`. |
+| `This access key already has 10 phones registered` | That person has too many phones registered. Phones are removed when they unsubscribe or uninstall the app; raise `RELAY_MAX_DEVICES_PER_KEY` if needed. |
 
 ## How rules are matched
 
@@ -124,6 +235,7 @@ Settings, from environment variables:
 | `RELAY_PORT` | `8080` | Port to listen on |
 | `RELAY_DATA_DIR` | `data` (`/data` in Docker) | Where keys, phones and the Firebase key are kept |
 | `FCM_CREDENTIALS` | `$RELAY_DATA_DIR/firebase-service-account.json` | The Firebase service account key |
+| `RELAY_MAX_DEVICES_PER_KEY` | `10` | How many phones one access key can register |
 
 ## API
 

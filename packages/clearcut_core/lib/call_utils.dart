@@ -1,6 +1,11 @@
 /// Helpers for the call data returned by the API and the live stream.
 library;
 
+/// System IDs go straight into API URLs, so only plain characters are
+/// allowed. The relay applies the same rule.
+bool isValidSystemId(String id) =>
+    RegExp(r'^[A-Za-z0-9._-]{1,100}$').hasMatch(id);
+
 const _audioBaseUrl = 'https://audio.clearcutradio.app/';
 
 /// Returns a copy of [call] with `transcript` flattened to plain text.

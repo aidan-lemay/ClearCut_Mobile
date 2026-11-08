@@ -60,10 +60,14 @@ class _ServeCommand extends Command<void> {
     }
 
     final relay = Relay(store, push)..start();
+    final maxDevices =
+        int.tryParse(env['RELAY_MAX_DEVICES_PER_KEY'] ?? '') ?? 10;
     final server = await shelf_io.serve(
-      buildApi(relay),
+      buildApi(relay, maxDevicesPerKey: maxDevices),
       InternetAddress.anyIPv4,
       port,
+      // Don't advertise what the server runs.
+      poweredByHeader: null,
     );
     print(
       'Relay listening on port ${server.port} with ${store.keys.length} '
