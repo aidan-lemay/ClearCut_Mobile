@@ -85,7 +85,19 @@ The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. To instal
 adb install -r build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Release builds are currently signed with the debug key, which is unique to each machine. If the phone already has a build from another machine, the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. To keep your favorites, build with the original machine's `~/.android/debug.keystore`. Uninstalling the old build also works, but it deletes your favorites.
+Android only installs an update signed with the same key as the installed app; otherwise the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Builds shared with other people should be signed with the release key:
+
+1. Put the keystore somewhere outside the repository, such as `~/keys/clearcut-release.jks`.
+2. Create `android/key.properties`:
+
+   ```properties
+   storeFile=/home/you/keys/clearcut-release.jks
+   storePassword=...
+   keyAlias=clearcut
+   keyPassword=...
+   ```
+
+Release builds then use that key. Without `key.properties`, they're signed with your machine's debug key, which is fine for testing but differs from machine to machine. Both files are kept out of git. Keep a backup of the keystore and its password: if it's lost, existing installs can't be updated, and everyone has to uninstall and reinstall, losing their settings unless they export them first.
 
 ### 7. Turn on push notifications (optional)
 
