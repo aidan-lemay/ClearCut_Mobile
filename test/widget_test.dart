@@ -8,7 +8,9 @@ import 'package:clearcut_mobile/pages/listener_page.dart';
 import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/systems_page.dart';
 import 'package:clearcut_mobile/services/backup.dart';
+import 'package:clearcut_mobile/services/alert_notifications.dart';
 import 'package:clearcut_mobile/services/call_utils.dart';
+import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:clearcut_mobile/services/sse_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,12 +54,41 @@ class FakeApi {
   bool failOlderCalls = false;
   final streams = <StreamController<List<int>>>[];
 
+  // A relay at relay.test.
+  String relayKey = 'good-key';
+  String relayPush = 'fcm';
+  bool relayDown = false;
+  final relayRequests = <http.Request>[];
+
+  List<Map<String, dynamic>> get relayPuts => [
+        for (final request in relayRequests)
+          if (request.method == 'PUT') jsonDecode(request.body)
+      ];
+
   void send(Map<String, dynamic> event) {
     streams.last.add(utf8.encode('data:${jsonEncode(event)}\n\n'));
   }
 
   late final client = MockClient.streaming((request, _) async {
     final path = request.url.path;
+    if (request.url.host == 'relay.test') {
+      if (relayDown) throw http.ClientException('Connection refused');
+      relayRequests.add(request as http.Request);
+      final authorized =
+          request.headers['Authorization'] == 'Bearer $relayKey';
+      final body = !authorized
+          ? {'error': 'Missing or unknown access key.'}
+          : path == '/v1/status'
+              ? {
+                  'ok': true,
+                  'apiVersion': 1,
+                  'keyName': 'aidan',
+                  'push': relayPush,
+                }
+              : {'ok': true};
+      return http.StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode(body))), authorized ? 200 : 401);
+    }
     requests[path] = (requests[path] ?? 0) + 1;
     if (path.endsWith('/stream')) {
       final controller = StreamController<List<int>>();
@@ -102,6 +133,43 @@ class FakeBackupFiles implements BackupFiles {
   Future<String?> open() async => toOpen;
 }
 
+class FakePush implements PushService {
+  @override
+  bool available = true;
+  String? token = 'push-token';
+  int permissionRequests = 0;
+  final messages = StreamController<Map<String, String>>.broadcast();
+  final refreshes = StreamController<String>.broadcast();
+
+  @override
+  Future<String?> getToken() async => token;
+  @override
+  Stream<String> get onTokenRefresh => refreshes.stream;
+  @override
+  Stream<Map<String, String>> get onMessage => messages.stream;
+  @override
+  Future<bool> requestPermission() async {
+    permissionRequests++;
+    return true;
+  }
+}
+
+AlertRule alertRule({
+  String name = 'Fires',
+  AlertMode mode = AlertMode.keywords,
+  List<String> keywords = const ['fire'],
+}) =>
+    AlertRule(
+      name: name,
+      systemId: 'sys',
+      systemName: 'Test System',
+      talkgroups: [
+        {'id': 1, 'name': 'Dispatch'}
+      ],
+      mode: mode,
+      keywords: keywords,
+    );
+
 Map<String, dynamic> favoriteOf(int id) => {
       'systemId': 'sys',
       'talkgroups': [talkgroup(id, 'TG$id')]
@@ -109,6 +177,14 @@ Map<String, dynamic> favoriteOf(int id) => {
 
 List<dynamic> favoriteIds(List<Map<String, dynamic>> favorites) =>
     favorites.map((f) => f['talkgroups'][0]['id']).toList();
+
+/// The Settings page is long, so its tests use a tall screen to keep
+/// everything built and tappable without scrolling.
+void useTallScreen(WidgetTester tester) {
+  tester.view.physicalSize = Size(800, 4000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -445,6 +521,253 @@ void main() {
         'mailto:$feedbackEmail?subject=Clearcut%20Mobile%20Feedback%20Request');
   });
 
+  group('notifications', () {
+    test('relay addresses default to HTTPS and keep a given port and path',
+        () {
+      expect(relayBaseUri('relay.example.com', null).toString(),
+          'https://relay.example.com');
+      expect(relayBaseUri(' relay.example.com ', 8443).toString(),
+          'https://relay.example.com:8443');
+      expect(relayBaseUri('http://192.168.1.5:8080/', null).toString(),
+          'http://192.168.1.5:8080');
+      expect(relayBaseUri('https://example.com/relay/', null).toString(),
+          'https://example.com/relay');
+      expect(relayBaseUri('', null), isNull);
+      expect(relayBaseUri('ftp://example.com', null), isNull);
+    });
+
+    test('keywords are split on commas without blanks or repeats', () {
+      expect(parseKeywords('fire, , Fire,shots  fired ,*, mva*'),
+          ['fire', 'shots  fired', 'mva*']);
+    });
+
+    test('notification IDs are stable and positive', () {
+      expect(stableNotificationId('7525309475746480128'),
+          stableNotificationId('7525309475746480128'));
+      expect(stableNotificationId('a'), isNot(stableNotificationId('b')));
+      expect(stableNotificationId('x' * 50), greaterThanOrEqualTo(0));
+    });
+
+    test('pushes read well as notifications', () {
+      final call = describeAlert({'type': 'call', 'talkgroupName': 'Dispatch'});
+      expect((call.title, call.body), ('Dispatch', 'New call'));
+
+      final match = describeAlert({
+        'type': 'transcript',
+        'talkgroupName': 'Dispatch',
+        'text': 'Structure fire',
+        'keywords': 'fire',
+        'rules': 'Fires',
+      });
+      expect(match.body, 'Structure fire');
+      expect(match.summary, 'Matched: fire');
+      expect(describeAlert({'type': 'transcript', 'rules': 'All'}).summary,
+          'All');
+    });
+
+    test('a tapped notification leads to its talkgroup and call', () {
+      final target = AlertTarget.fromPayload(jsonEncode({
+        'systemId': 'sys',
+        'talkgroupId': '7',
+        'talkgroupName': 'Fire',
+        'callId': 'c1',
+      }))!;
+      expect((target.systemId, target.talkgroupId, target.callId),
+          ('sys', 7, 'c1'));
+      expect(AlertTarget.fromPayload('nope'), isNull);
+      expect(AlertTarget.fromPayload(jsonEncode({'systemId': 'sys'})), isNull);
+    });
+
+    test('a wrong key or address is reported and nothing is saved', () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush());
+        await controller.load();
+        expect(await controller.connect('relay.test', null, 'bad-key'),
+            contains("didn't accept this access key"));
+        expect(await controller.connect('', null, 'good-key'),
+            contains('address'));
+        api.relayDown = true;
+        expect(await controller.connect('relay.test', 8443, 'good-key'),
+            contains("Couldn't reach a relay at relay.test:8443"));
+        expect(controller.subscribed, isFalse);
+        expect(api.relayPuts, isEmpty);
+      }, () => api.client);
+    });
+
+    test('connecting registers the phone, and changes keep the relay in sync',
+        () async {
+      final api = FakeApi();
+      final push = FakePush();
+      await http.runWithClient(() async {
+        final controller = NotificationController(push);
+        await controller.load();
+        expect(await controller.connect('relay.test', null, 'good-key'), isNull);
+        expect(controller.status?.keyName, 'aidan');
+        expect(push.permissionRequests, 1);
+        expect(api.relayPuts.single['token'], 'push-token');
+        expect(api.relayRequests.last.url.path,
+            '/v1/devices/${controller.deviceId}');
+
+        final rule = alertRule();
+        await controller.saveRule(rule);
+        final sent = api.relayPuts.last['rules'].single;
+        // The fields the relay reads.
+        expect(sent, containsPair('id', rule.id));
+        expect(sent, containsPair('mode', 'keywords'));
+        expect(sent, containsPair('systemId', 'sys'));
+        expect(sent, containsPair('enabled', true));
+        expect(sent['keywords'], ['fire']);
+        expect(sent['talkgroups'], [
+          {'id': 1, 'name': 'Dispatch'}
+        ]);
+
+        await controller.pause(Duration(hours: 1));
+        expect(controller.isPaused, isTrue);
+        expect(api.relayPuts.last['paused'], isTrue);
+        expect(api.relayPuts.last['pausedUntil'], isA<int>());
+        await controller.resume();
+        expect(api.relayPuts.last['paused'], isFalse);
+
+        await controller.saveRule(rule.copyWith(enabled: false));
+        expect(api.relayPuts.last['rules'].single['enabled'], isFalse);
+        await controller.deleteRule(rule.id);
+        expect(api.relayPuts.last['rules'], isEmpty);
+
+        // A new push token is sent along.
+        push.token = 'new-token';
+        push.refreshes.add('new-token');
+        await pumpEventQueue();
+        expect(api.relayPuts.last['token'], 'new-token');
+      }, () => api.client);
+    });
+
+    test('a failed update is shown and can be retried', () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush());
+        await controller.load();
+        await controller.connect('relay.test', null, 'good-key');
+        api.relayDown = true;
+        await controller.saveRule(alertRule());
+        expect(controller.syncError, contains("Couldn't reach"));
+        api.relayDown = false;
+        expect(await controller.sync(), isNull);
+        expect(controller.syncError, isNull);
+        expect(api.relayPuts.last['rules'], hasLength(1));
+      }, () => api.client);
+    });
+
+    test('unsubscribing leaves the relay and stops alerts, even offline',
+        () async {
+      final api = FakeApi();
+      final shown = <Map<String, String>>[];
+      await http.runWithClient(() async {
+        final push = FakePush();
+        final controller =
+            NotificationController(push, showAlert: shown.add);
+        await controller.load();
+        await controller.connect('relay.test', null, 'good-key');
+        push.messages.add({'type': 'test'});
+        await pumpEventQueue();
+        expect(shown, hasLength(1));
+
+        api.relayDown = true;
+        expect(await controller.unsubscribe(), contains("couldn't be told"));
+        expect(controller.subscribed, isFalse);
+        expect(await alertsAllowedFromStorage(), isFalse);
+        push.messages.add({'type': 'test'});
+        await pumpEventQueue();
+        expect(shown, hasLength(1));
+
+        api.relayDown = false;
+        await controller.connect('relay.test', null, 'good-key');
+        expect(await controller.unsubscribe(), isNull);
+        expect(api.relayRequests.last.method, 'DELETE');
+      }, () => api.client);
+    });
+
+    test('a new key registers as a new device and drops the old one',
+        () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush());
+        await controller.load();
+        await controller.connect('relay.test', null, 'good-key');
+        final oldId = controller.deviceId;
+
+        api.relayKey = 'second-key';
+        // The old registration can only be removed with the old key, which
+        // the relay still accepts here.
+        api.relayKey = 'good-key';
+        await controller.connect('relay.test', null, 'good-key');
+        expect(controller.deviceId, oldId); // Same key, same device.
+
+        api.relayKey = 'other-key';
+        await controller.connect('relay.test', null, 'other-key');
+        expect(controller.deviceId, isNot(oldId));
+        expect(api.relayRequests.any((r) =>
+                r.method == 'DELETE' && r.url.path.endsWith(oldId)), isTrue);
+      }, () => api.client);
+    });
+
+    test('settings and pauses survive a restart, and pauses run out',
+        () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush());
+        await controller.load();
+        await controller.connect('relay.test', 8443, 'good-key');
+        await controller.saveRule(alertRule());
+        await controller.pause(null);
+        expect(await alertsAllowedFromStorage(), isFalse);
+
+        final restarted = NotificationController(FakePush());
+        await restarted.load();
+        expect(restarted.port, 8443);
+        expect(restarted.key, 'good-key');
+        expect(restarted.deviceId, controller.deviceId);
+        expect(restarted.rules.single.name, 'Fires');
+        expect(restarted.isPaused, isTrue);
+        expect(restarted.pausedUntil, isNull);
+
+        await restarted.resume();
+        expect(await alertsAllowedFromStorage(), isTrue);
+      }, () => api.client);
+      expect(
+          isPausedJson({
+            'paused': true,
+            'pausedUntil': DateTime.now().millisecondsSinceEpoch ~/ 1000 - 5,
+          }),
+          isFalse);
+    });
+
+    test('settings backups carry the server and rules but never the key',
+        () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush());
+        await controller.load();
+        await controller.connect('relay.test', 8443, 'good-key');
+        await controller.saveRule(alertRule());
+
+        final file = exportSettings(
+            hiddenSystems: [], notifications: controller.toBackupJson());
+        expect(file, isNot(contains('good-key')));
+
+        final fresh = NotificationController(FakePush());
+        final backup = parseSettingsBackup(file).notifications;
+        expect(await fresh.importBackup(backup, replace: false), 1);
+        expect(fresh.address, 'relay.test');
+        expect(fresh.port, 8443);
+        expect(fresh.key, isEmpty);
+        expect(fresh.rules.single.keywords, ['fire']);
+        // The same rule isn't added twice.
+        expect(await fresh.importBackup(backup, replace: false), 0);
+      }, () => api.client);
+    });
+  });
+
   group('pages', () {
     Future<void> pumpApp(WidgetTester tester, Widget home) async {
       await tester.pumpWidget(ChangeNotifierProvider(
@@ -619,6 +942,7 @@ void main() {
 
       testWidgets('a hidden system added in settings opens its talkgroups',
           (tester) async {
+        useTallScreen(tester);
         final api = FakeApi()
           ..talkgroupsBySystem['very-bad'] = [talkgroup(100, 'RIT UHF Ops')];
         await http.runWithClient(() async {
@@ -648,6 +972,7 @@ void main() {
 
       testWidgets('hidden systems still show when the system list fails',
           (tester) async {
+        useTallScreen(tester);
         SharedPreferences.setMockInitialValues({
           'hiddenSystems': jsonEncode([
             {'id': 'very-bad', 'name': 'RIT'}
@@ -663,6 +988,7 @@ void main() {
 
       testWidgets('an ID with no talkgroups asks before it is added',
           (tester) async {
+        useTallScreen(tester);
         final api = FakeApi()..talkgroupsBySystem['typo'] = [];
         await http.runWithClient(() async {
           await pumpApp(tester, MySystemsPage());
@@ -687,6 +1013,7 @@ void main() {
 
       testWidgets('bad and duplicate IDs are refused without a lookup',
           (tester) async {
+        useTallScreen(tester);
         final api = FakeApi();
         await http.runWithClient(() async {
           await pumpApp(tester, MySystemsPage());
@@ -708,6 +1035,7 @@ void main() {
 
       testWidgets('a hidden system can be renamed and removed',
           (tester) async {
+        useTallScreen(tester);
         SharedPreferences.setMockInitialValues({
           'hiddenSystems': jsonEncode([
             {'id': 'very-bad', 'name': ''}
@@ -736,6 +1064,7 @@ void main() {
 
       testWidgets('favorites export and import keep their order',
           (tester) async {
+        useTallScreen(tester);
         SharedPreferences.setMockInitialValues({
           'favorites':
               jsonEncode([favoriteOf(1), favoriteOf(2), favoriteOf(3)]),
@@ -769,6 +1098,7 @@ void main() {
 
       testWidgets('settings export and import carry hidden systems',
           (tester) async {
+        useTallScreen(tester);
         final files = FakeBackupFiles()
           ..toOpen = exportSettings(hiddenSystems: [
             {'id': 'very-bad', 'name': 'RIT'}
@@ -791,6 +1121,7 @@ void main() {
       });
 
       testWidgets('importing the wrong kind of file says why', (tester) async {
+        useTallScreen(tester);
         final files = FakeBackupFiles()
           ..toOpen = exportSettings(hiddenSystems: []);
         await http.runWithClient(() async {
@@ -802,6 +1133,151 @@ void main() {
           expect(stateOf(tester).favorites, isEmpty);
           await finishMessages(tester);
         }, () => FakeApi().client);
+      });
+    });
+
+    group('notification settings', () {
+      Future<FakePush> pumpSettings(WidgetTester tester) async {
+        final push = FakePush();
+        await tester.pumpWidget(ChangeNotifierProvider(
+          create: (_) => MyAppState(push: push),
+          child: MaterialApp(home: Scaffold(body: SettingsPage())),
+        ));
+        await tester.pumpAndSettle();
+        return push;
+      }
+
+      Future<void> finishMessages(WidgetTester tester) async {
+        await tester.pump(Duration(seconds: 10));
+        await tester.pumpAndSettle();
+      }
+
+      testWidgets('a build without push support says so', (tester) async {
+        useTallScreen(tester);
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage()));
+          expect(find.text('Not available in this copy of the app'),
+              findsOneWidget);
+        }, () => FakeApi().client);
+      });
+
+      testWidgets('connecting and adding a keyword rule', (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await pumpSettings(tester);
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Server address'), 'relay.test');
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Access key'), 'bad-key');
+          await tester.tap(find.text('Connect'));
+          await tester.pumpAndSettle();
+          expect(find.textContaining("didn't accept this access key"),
+              findsOneWidget);
+
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Access key'), 'good-key');
+          await tester.tap(find.text('Connect'));
+          await tester.pumpAndSettle();
+          expect(find.text('Connected to relay.test'), findsOneWidget);
+          expect(find.text('Key: aidan'), findsOneWidget);
+
+          await tester.scrollUntilVisible(find.text('Add Rule'), 200,
+              scrollable: find.byType(Scrollable).first);
+          await tester.tap(find.text('Add Rule'));
+          await tester.pumpAndSettle();
+
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Keywords'), 'fire, mva*');
+          await tester.tap(find.byType(DropdownButtonFormField<String>));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Test System').last);
+          await tester.pumpAndSettle();
+          await tester.scrollUntilVisible(find.text('Fire'), 200,
+              scrollable: find.byType(Scrollable).first);
+          await tester.tap(find.text('Fire'));
+          await tester.pump();
+          expect(find.text('Talkgroups (1 chosen)'), findsOneWidget);
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+
+          final rule = api.relayPuts.last['rules'].single;
+          expect(rule['name'], 'Fire');
+          expect(rule['keywords'], ['fire', 'mva*']);
+          expect(rule['talkgroups'], [
+            {'id': 2, 'name': 'Fire'}
+          ]);
+          await tester.scrollUntilVisible(
+              find.text('Keywords: fire, mva* · Fire on Test System'), 200,
+              scrollable: find.byType(Scrollable).first);
+          await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('a rule needs talkgroups and keywords', (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await pumpSettings(tester);
+          final controller = tester
+              .element(find.byType(SettingsPage))
+              .read<MyAppState>()
+              .notifications;
+          await controller.connect('relay.test', null, 'good-key');
+          await tester.pumpAndSettle();
+          await tester.scrollUntilVisible(find.text('Add Rule'), 200,
+              scrollable: find.byType(Scrollable).first);
+          await tester.tap(find.text('Add Rule'));
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(find.text('Choose a system.'), findsOneWidget);
+          await tester.tap(find.byType(DropdownButtonFormField<String>));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Test System').last);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(find.text('Choose at least one talkgroup.'), findsOneWidget);
+          await tester.scrollUntilVisible(find.text('Dispatch'), 200,
+              scrollable: find.byType(Scrollable).first);
+          await tester.tap(find.text('Dispatch'));
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(find.text('Enter at least one keyword.'), findsOneWidget);
+          expect(controller.rules, isEmpty);
+          await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('pausing, resuming, and a relay that can\'t push',
+          (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi()..relayPush = 'log';
+        await http.runWithClient(() async {
+          await pumpSettings(tester);
+          final controller = tester
+              .element(find.byType(SettingsPage))
+              .read<MyAppState>()
+              .notifications;
+          await controller.connect('relay.test', null, 'good-key');
+          await tester.pumpAndSettle();
+          expect(find.text("The relay can't send notifications yet"),
+              findsOneWidget);
+
+          await tester.tap(find.text('Pause Notifications'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Until I resume'));
+          await tester.pumpAndSettle();
+          expect(find.text('Paused until you resume'), findsOneWidget);
+          expect(api.relayPuts.last['paused'], isTrue);
+
+          await tester.tap(find.text('Resume'));
+          await tester.pumpAndSettle();
+          expect(find.text('Pause Notifications'), findsOneWidget);
+          expect(api.relayPuts.last['paused'], isFalse);
+        }, () => api.client);
       });
     });
 
@@ -1111,6 +1587,25 @@ void main() {
           expect(api.streams.first.hasListener, isFalse);
           expect(api.streams.last.hasListener, isTrue);
 
+          await leave(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('the call a notification was about is highlighted',
+          (tester) async {
+        final api = FakeApi()..latestCalls = [call('a', 20), call('b', 10)];
+        await http.runWithClient(() async {
+          await pumpApp(
+              tester,
+              ListenerPage(
+                selectedTalkgroups: selected,
+                currentSystem: 'sys',
+                highlightCallId: 'b',
+              ));
+          final card = tester.widget<Card>(
+              find.byKey(ValueKey('highlighted-call')));
+          expect(card.shape, isA<RoundedRectangleBorder>());
+          expect(find.byKey(ValueKey('highlighted-call')), findsOneWidget);
           await leave(tester);
         }, () => api.client);
       });

@@ -1,4 +1,8 @@
+import 'package:clearcut_mobile/pages/listener_page.dart';
 import 'package:clearcut_mobile/pages/systems_page.dart';
+import 'package:clearcut_mobile/services/alert_notifications.dart';
+import 'package:clearcut_mobile/services/firebase_push.dart';
+import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
@@ -24,18 +28,52 @@ Multiple TGs Stream: /api/v1/stream?system=us-ny-monroe&talkgroup=[TGID,TGID,TGI
 More Calls: https://clearcutradio.app/api/v1/calls?system=[SYSTEM NAME]&talkgroup=[TGID]&before_ts=[TIMESTAMP OF LAST CALL]
 */
 
-void main() {
-  runApp(MyApp());
+final navigatorKey = GlobalKey<NavigatorState>();
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final push = FirebasePushService();
+  await push.init();
+  try {
+    await initAlertNotifications(onTap: openAlertTarget);
+  } catch (error) {
+    print('Error setting up notifications: $error');
+  }
+  runApp(MyApp(push: push));
+
+  // Opened by tapping a notification while the app wasn't running.
+  final target = await launchAlertTarget().catchError((_) => null);
+  if (target != null) {
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => openAlertTarget(target));
+  }
+}
+
+/// Opens the talkgroup a notification came from, with its call highlighted.
+/// The call isn't played: that's left to the user.
+void openAlertTarget(AlertTarget target) {
+  navigatorKey.currentState?.push(MaterialPageRoute(
+    builder: (context) => ListenerPage(
+      selectedTalkgroups: [
+        {'id': target.talkgroupId, 'name': target.talkgroupName}
+      ],
+      currentSystem: target.systemId,
+      highlightCallId: target.callId,
+    ),
+  ));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final PushService push;
+
+  const MyApp({super.key, this.push = const NoPushService()});
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (context) => MyAppState(),
+      create: (context) => MyAppState(push: push),
       child: MaterialApp(
+        navigatorKey: navigatorKey,
         title: 'Clearcut Mobile',
         themeMode: ThemeMode.dark,
         theme: ThemeData(
@@ -68,10 +106,24 @@ class MyAppState extends ChangeNotifier {
   /// them. Each is `{'id': ..., 'name': ...}`, where the name may be empty.
   var hiddenSystems = <Map<String, dynamic>>[];
 
-  MyAppState() {
+  final NotificationController notifications;
+
+  MyAppState({PushService push = const NoPushService()})
+      : notifications = NotificationController(
+          push,
+          showAlert: (data) => showAlert(data).catchError(
+              (Object error) => print('Error showing alert: $error')),
+        ) {
     fetchSystems();
     loadFavorites();
     loadHiddenSystems();
+    notifications.load();
+  }
+
+  @override
+  void dispose() {
+    notifications.dispose();
+    super.dispose();
   }
 
   /// The fetched systems followed by the hidden ones. A hidden system that

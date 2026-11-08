@@ -1,4 +1,5 @@
 import 'package:clearcut_mobile/main.dart';
+import 'package:clearcut_mobile/pages/notification_settings.dart';
 import 'package:clearcut_mobile/services/backup.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -202,7 +203,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final appState = context.read<MyAppState>();
     await _save(
       _fileName('settings'),
-      exportSettings(hiddenSystems: appState.hiddenSystems),
+      exportSettings(
+        hiddenSystems: appState.hiddenSystems,
+        notifications: appState.notifications.toBackupJson(),
+      ),
       'Settings saved.',
     );
   }
@@ -219,14 +223,29 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final appState = context.read<MyAppState>();
     final systems = backup.hiddenSystems;
-    final replace = await _askReplace(
-        'hidden systems',
-        _count(systems.length, 'hidden system', 'hidden systems'),
-        appState.hiddenSystems.isNotEmpty);
+    final rules = backup.notifications.rules;
+    final hasCurrent = appState.hiddenSystems.isNotEmpty ||
+        appState.notifications.rules.isNotEmpty;
+    final replace = await _askReplace('settings', 'settings', hasCurrent);
     if (replace == null || !mounted) return;
-    final added = appState.importHiddenSystems(systems, replace: replace);
-    _showMessage(_importedMessage(
-        'hidden system', 'hidden systems', added, systems.length, replace));
+    final addedSystems =
+        appState.importHiddenSystems(systems, replace: replace);
+    final addedRules = await appState.notifications
+        .importBackup(backup.notifications, replace: replace);
+    if (!mounted) return;
+
+    final parts = [
+      if (addedSystems > 0)
+        _count(addedSystems, 'hidden system', 'hidden systems'),
+      if (addedRules > 0) _count(addedRules, 'alert rule', 'alert rules'),
+    ];
+    if (parts.isEmpty) {
+      _showMessage(systems.isEmpty && rules.isEmpty
+          ? 'Imported settings.'
+          : 'You already had everything in this file.');
+    } else {
+      _showMessage('Imported ${parts.join(' and ')}.');
+    }
   }
 
   Future<void> _exportFavorites() async {
@@ -345,17 +364,22 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         Divider(height: 32),
+        heading('Notifications'),
+        NotificationSettingsSection(),
+        Divider(height: 32),
         heading('Backup'),
         ListTile(
           leading: Icon(Icons.file_upload),
           title: Text('Export Settings'),
-          subtitle: Text('Save your hidden systems to a file'),
+          subtitle: Text('Save hidden systems, notification server and alert '
+              'rules to a file. Your access key isn\'t included.'),
           onTap: _exportSettings,
         ),
         ListTile(
           leading: Icon(Icons.file_download),
           title: Text('Import Settings'),
-          subtitle: Text('Load hidden systems from a file'),
+          subtitle: Text('Load hidden systems, notification server and alert '
+              'rules from a file'),
           onTap: _importSettings,
         ),
         ListTile(

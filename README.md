@@ -64,7 +64,14 @@ flutter analyze
 flutter test
 ```
 
-The tests use a fake API, so they don't need a network connection or a device. Audio playback isn't covered, so check that on a phone.
+The tests use a fake API, so they don't need a network connection or a device. Audio playback and real push notifications aren't covered, so check those on a phone.
+
+The notification relay has its own tests:
+
+```sh
+cd relay
+dart test
+```
 
 ### 6. Build an APK
 
@@ -80,15 +87,21 @@ adb install -r build/app/outputs/flutter-apk/app-release.apk
 
 Release builds are currently signed with the debug key, which is unique to each machine. If the phone already has a build from another machine, the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. To keep your favorites, build with the original machine's `~/.android/debug.keystore`. Uninstalling the old build also works, but it deletes your favorites.
 
+### 7. Turn on push notifications (optional)
+
+Notifications come from the relay in [`relay/`](relay/README.md) and need a Firebase project. Builds work without one, but their notification settings say push isn't available. To include push, put the project's `google-services.json` at `android/app/google-services.json` and rebuild. [The relay's README](relay/README.md#1-set-up-firebase) covers making the Firebase project and running the relay. `google-services.json` is kept out of git.
+
 ### Project layout
 
 | Path | What's there |
 |---|---|
 | `lib/main.dart` | App entry point, shared state, favorites and hidden systems storage, API notes |
 | `lib/pages/` | One file per screen |
-| `lib/services/sse_service.dart` | Live call stream, including reconnecting |
-| `lib/services/call_utils.dart` | Merging and formatting call data |
 | `lib/services/backup.dart` | Settings and favorites backup file format |
+| `lib/services/notifications.dart` | Alert rules, relay client, and the phone's notification settings |
+| `lib/services/alert_notifications.dart`, `firebase_push.dart` | Showing pushes as notifications, and receiving them from Firebase |
+| `packages/clearcut_core/` | Live call stream and call data helpers, shared by the app and the relay |
+| `relay/` | The notification relay server, with its own [README](relay/README.md) |
 | `test/widget_test.dart` | All tests, and the fake API they use |
 
 ### How the API behaves

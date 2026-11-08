@@ -1,0 +1,7 @@
+# Only the relay and the package it shares with the app go into the image.
+*
+!relay/
+!packages/
+relay/.dart_tool/
+relay/data/
+packages/*/.dart_tool/

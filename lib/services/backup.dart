@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:file_picker/file_picker.dart';
 
 /// Backup files are JSON, marked with this format name and a kind, so that a
@@ -90,12 +91,23 @@ List<Map<String, dynamic>> parseFavoritesBackup(String text) {
 /// added.
 class SettingsBackup {
   final List<Map<String, dynamic>> hiddenSystems;
-  SettingsBackup({required this.hiddenSystems});
+  final NotificationBackup notifications;
+  SettingsBackup(
+      {required this.hiddenSystems, NotificationBackup? notifications})
+      : notifications = notifications ?? NotificationBackup();
 }
 
-String exportSettings({required List<Map<String, dynamic>> hiddenSystems}) =>
+/// [notifications] is the relay address and alert rules. The access key is
+/// never part of a backup.
+String exportSettings({
+  required List<Map<String, dynamic>> hiddenSystems,
+  Map<String, dynamic>? notifications,
+}) =>
     _encode(settingsBackupKind, {
-      'settings': {'hiddenSystems': hiddenSystems},
+      'settings': {
+        'hiddenSystems': hiddenSystems,
+        if (notifications != null) 'notifications': notifications,
+      },
     });
 
 SettingsBackup parseSettingsBackup(String text) {
@@ -115,7 +127,14 @@ SettingsBackup parseSettingsBackup(String text) {
     final name = system['name'];
     hiddenSystems.add({'id': system['id'], 'name': name is String ? name : ''});
   }
-  return SettingsBackup(hiddenSystems: hiddenSystems);
+  final NotificationBackup notifications;
+  try {
+    notifications = NotificationBackup.fromJson(settings['notifications']);
+  } on FormatException {
+    throw damaged;
+  }
+  return SettingsBackup(
+      hiddenSystems: hiddenSystems, notifications: notifications);
 }
 
 /// System IDs go straight into API URLs, so only plain characters are allowed.

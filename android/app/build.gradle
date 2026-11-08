@@ -4,6 +4,12 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// Push notifications need a Firebase config, which is kept out of the repo.
+// Builds without it work, with notifications turned off. See the README.
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
+
 android {
     namespace = "com.aidanlemay.clearcut_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -12,6 +18,8 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+        // Needed by flutter_local_notifications.
+        coreLibraryDesugaringEnabled true
     }
 
     defaultConfig {
@@ -40,6 +48,7 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
     implementation "com.google.android.material:material:1.13.0-alpha07" // Add this line
     // Add other dependencies here if necessary
 }
