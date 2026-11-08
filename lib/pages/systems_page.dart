@@ -2,6 +2,7 @@ import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/advancedsearch_page.dart';
 import 'package:clearcut_mobile/pages/favorites_page.dart';
 import 'package:clearcut_mobile/pages/info_page.dart';
+import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/talkgroups_page.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -27,11 +28,19 @@ class _MySystemsPageState extends State<MySystemsPage> {
         page = InfoPage();
       case 3:
         page = AdvancedSearch();
+      case 4:
+        page = SettingsPage();
       default:
         throw UnimplementedError('No widget for $selectedIndex');
     }
 
-    const pageTitles = ['Systems', 'Favorites', 'Info', 'Advanced Search'];
+    const pageTitles = [
+      'Systems',
+      'Favorites',
+      'Info',
+      'Advanced Search',
+      'Settings',
+    ];
 
     return Scaffold(
       appBar: AppBar(
@@ -107,6 +116,17 @@ class _MySystemsPageState extends State<MySystemsPage> {
             //   },
             // ),
             ListTile(
+              leading: Icon(Icons.settings),
+              title: Text('Settings'),
+              onTap: () {
+                setState(() {
+                  selectedIndex = 4;
+                  showFavorites = false;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
               leading: Icon(Icons.info_outline),
               title: Text('Info'),
               onTap: () {
@@ -129,30 +149,36 @@ class SystemsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<MyAppState>();
-    final systems = appState.apiData;
+    final systems = appState.allSystems;
 
-    if (systems == null) {
-      return Center(
-        child: appState.systemsFailed
-            ? Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text("Couldn't load systems."),
-                  SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: appState.fetchSystems,
-                    child: Text('Retry'),
-                  ),
-                ],
-              )
-            : CircularProgressIndicator(),
-      );
+    // Hidden systems are still shown while the list loads or if it fails.
+    Widget? status;
+    if (appState.apiData == null) {
+      status = appState.systemsFailed
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text("Couldn't load systems."),
+                SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: appState.fetchSystems,
+                  child: Text('Retry'),
+                ),
+              ],
+            )
+          : CircularProgressIndicator();
+      if (systems.isEmpty) return Center(child: status);
     }
 
     return Center(
       child: ListView(
         shrinkWrap: true,
         children: [
+          if (status != null)
+            Padding(
+              padding: const EdgeInsets.all(10.0),
+              child: Center(child: status),
+            ),
           for (final x in systems)
             Padding(
               padding: const EdgeInsets.all(10.0),
@@ -164,6 +190,12 @@ class SystemsPage extends StatelessWidget {
                 contentPadding: EdgeInsets.all(3),
                 horizontalTitleGap: 10,
                 title: Text(x['name']),
+                trailing: x['hidden'] == true
+                    ? Tooltip(
+                        message: 'Hidden system',
+                        child: Icon(Icons.visibility_off),
+                      )
+                    : null,
                 onTap: () {
                   appState.setCurrent(x);
                   Navigator.push(

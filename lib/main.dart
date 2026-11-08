@@ -64,9 +64,121 @@ class MyAppState extends ChangeNotifier {
   bool systemsFailed = false;
   var favorites = <Map<String, dynamic>>[];
 
+  /// Systems the user added by ID because the systems list doesn't include
+  /// them. Each is `{'id': ..., 'name': ...}`, where the name may be empty.
+  var hiddenSystems = <Map<String, dynamic>>[];
+
   MyAppState() {
     fetchSystems();
     loadFavorites();
+    loadHiddenSystems();
+  }
+
+  /// The fetched systems followed by the hidden ones. A hidden system that
+  /// later appears in the fetched list is only shown once.
+  List<Map<String, dynamic>> get allSystems {
+    final listed = [
+      for (final system in apiData ?? []) Map<String, dynamic>.from(system)
+    ];
+    final listedIds = listed.map((system) => system['id']).toSet();
+    return [
+      ...listed,
+      for (final hidden in hiddenSystems)
+        if (!listedIds.contains(hidden['id']))
+          {
+            'id': hidden['id'],
+            'name': hiddenSystemName(hidden),
+            'hidden': true,
+          },
+    ];
+  }
+
+  static String hiddenSystemName(Map<String, dynamic> system) {
+    final name = (system['name'] as String? ?? '').trim();
+    return name.isEmpty ? system['id'] : name;
+  }
+
+  bool isListedSystem(String id) =>
+      apiData?.any((system) => system['id'] == id) ?? false;
+
+  bool hasHiddenSystem(String id) =>
+      hiddenSystems.any((system) => system['id'] == id);
+
+  void addHiddenSystem(String id, {String name = ''}) {
+    hiddenSystems.add({'id': id, 'name': name.trim()});
+    saveHiddenSystems();
+    notifyListeners();
+  }
+
+  void updateHiddenSystem(String oldId, String id, String name) {
+    final index = hiddenSystems.indexWhere((system) => system['id'] == oldId);
+    if (index < 0) return;
+    hiddenSystems[index] = {'id': id, 'name': name.trim()};
+    saveHiddenSystems();
+    notifyListeners();
+  }
+
+  void removeHiddenSystem(String id) {
+    hiddenSystems.removeWhere((system) => system['id'] == id);
+    saveHiddenSystems();
+    notifyListeners();
+  }
+
+  /// Adds imported hidden systems after the current ones, skipping IDs that
+  /// are already there, or replaces them all. Returns how many were added.
+  int importHiddenSystems(List<Map<String, dynamic>> incoming,
+      {required bool replace}) {
+    if (replace) hiddenSystems = [];
+    var added = 0;
+    for (final system in incoming) {
+      if (!hasHiddenSystem(system['id'])) {
+        hiddenSystems.add(system);
+        added++;
+      }
+    }
+    saveHiddenSystems();
+    notifyListeners();
+    return added;
+  }
+
+  /// Adds imported favorites after the current ones in the order given,
+  /// skipping ones already saved, or replaces them all. Returns how many were
+  /// added.
+  int importFavorites(List<Map<String, dynamic>> incoming,
+      {required bool replace}) {
+    if (replace) favorites = [];
+    var added = 0;
+    for (final favorite in incoming) {
+      if (!isFavorite(favorite['systemId'], favorite['talkgroups'])) {
+        favorites.add(favorite);
+        added++;
+      }
+    }
+    saveFavorites();
+    notifyListeners();
+    return added;
+  }
+
+  Future<void> saveHiddenSystems() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('hiddenSystems', jsonEncode(hiddenSystems));
+    } catch (error) {
+      print('Error saving hidden systems: $error');
+    }
+  }
+
+  Future<void> loadHiddenSystems() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('hiddenSystems');
+      if (stored != null) {
+        hiddenSystems = List<Map<String, dynamic>>.from(jsonDecode(stored));
+        notifyListeners();
+      }
+    } catch (error) {
+      print('Error loading hidden systems: $error');
+    }
   }
 
   Future<void> fetchSystems() async {

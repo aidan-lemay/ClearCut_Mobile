@@ -84,10 +84,11 @@ Release builds are currently signed with the debug key, which is unique to each 
 
 | Path | What's there |
 |---|---|
-| `lib/main.dart` | App entry point, shared state, favorites storage, API notes |
+| `lib/main.dart` | App entry point, shared state, favorites and hidden systems storage, API notes |
 | `lib/pages/` | One file per screen |
 | `lib/services/sse_service.dart` | Live call stream, including reconnecting |
 | `lib/services/call_utils.dart` | Merging and formatting call data |
+| `lib/services/backup.dart` | Settings and favorites backup file format |
 | `test/widget_test.dart` | All tests, and the fake API they use |
 
 ### How the API behaves

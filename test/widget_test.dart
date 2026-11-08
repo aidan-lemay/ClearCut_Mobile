@@ -5,7 +5,9 @@ import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/favorites_page.dart';
 import 'package:clearcut_mobile/pages/info_page.dart';
 import 'package:clearcut_mobile/pages/listener_page.dart';
+import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/systems_page.dart';
+import 'package:clearcut_mobile/services/backup.dart';
 import 'package:clearcut_mobile/services/call_utils.dart';
 import 'package:clearcut_mobile/services/sse_service.dart';
 import 'package:flutter/material.dart';
@@ -40,6 +42,9 @@ class FakeApi {
     {'id': 'sys', 'name': 'Test System'},
   ];
   var talkgroups = [talkgroup(1, 'Dispatch'), talkgroup(2, 'Fire')];
+  // Talkgroups for particular systems; others get [talkgroups].
+  final talkgroupsBySystem = <String, List<Map<String, dynamic>>>{};
+  final talkgroupSystems = <String?>[];
   List<Map<String, dynamic>> latestCalls = [];
   // Handed out one per before_ts request, then empty: the end of history.
   List<List<Map<String, dynamic>>> olderPages = [];
@@ -65,7 +70,9 @@ class FakeApi {
     if (path.endsWith('/systems')) {
       body = systems;
     } else if (path.endsWith('/talkgroups')) {
-      body = talkgroups;
+      final system = request.url.queryParameters['system'];
+      talkgroupSystems.add(system);
+      body = talkgroupsBySystem[system] ?? talkgroups;
     } else if (path.endsWith('/calls')) {
       calls.add(request as http.Request);
       final isOlderPage = request.url.queryParameters.containsKey('before_ts');
@@ -81,8 +88,125 @@ class FakeApi {
   });
 }
 
+class FakeBackupFiles implements BackupFiles {
+  final saved = <String, String>{};
+  String? toOpen;
+
+  @override
+  Future<bool> save(String fileName, String contents) async {
+    saved[fileName] = contents;
+    return true;
+  }
+
+  @override
+  Future<String?> open() async => toOpen;
+}
+
+Map<String, dynamic> favoriteOf(int id) => {
+      'systemId': 'sys',
+      'talkgroups': [talkgroup(id, 'TG$id')]
+    };
+
+List<dynamic> favoriteIds(List<Map<String, dynamic>> favorites) =>
+    favorites.map((f) => f['talkgroups'][0]['id']).toList();
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  group('backup files', () {
+    test('favorites keep their order through a round trip', () {
+      final favorites = [favoriteOf(3), favoriteOf(1), favoriteOf(2)];
+      final parsed = parseFavoritesBackup(exportFavorites(favorites));
+      expect(favoriteIds(parsed), [3, 1, 2]);
+      expect(parsed.first['talkgroups'][0]['name'], 'TG3');
+    });
+
+    test('settings keep hidden systems through a round trip', () {
+      final parsed = parseSettingsBackup(exportSettings(hiddenSystems: [
+        {'id': 'very-bad', 'name': 'RIT'},
+        {'id': 'other', 'name': ''},
+      ]));
+      expect(parsed.hiddenSystems.map((s) => s['id']), ['very-bad', 'other']);
+      expect(parsed.hiddenSystems.first['name'], 'RIT');
+    });
+
+    test('bad files are refused with a reason', () {
+      Matcher refusedWith(String text) => throwsA(isA<BackupException>()
+          .having((e) => e.message, 'message', contains(text)));
+
+      expect(() => parseFavoritesBackup('not json'),
+          refusedWith("isn't a Clearcut Mobile backup"));
+      expect(() => parseFavoritesBackup('{"favorites": []}'),
+          refusedWith("isn't a Clearcut Mobile backup"));
+      expect(() => parseFavoritesBackup(exportSettings(hiddenSystems: [])),
+          refusedWith('Import Settings'));
+      expect(() => parseSettingsBackup(exportFavorites([])),
+          refusedWith('Import Favorites'));
+
+      final newer = jsonDecode(exportFavorites([])) as Map<String, dynamic>;
+      newer['version'] = backupVersion + 1;
+      expect(() => parseFavoritesBackup(jsonEncode(newer)),
+          refusedWith('newer version'));
+
+      final damaged = jsonDecode(exportFavorites([favoriteOf(1)]));
+      damaged['favorites'][0]['talkgroups'] = [];
+      expect(() => parseFavoritesBackup(jsonEncode(damaged)),
+          refusedWith('damaged'));
+
+      expect(
+          () => parseSettingsBackup(exportSettings(hiddenSystems: [
+                {'id': 'a/b?c', 'name': ''}
+              ])),
+          refusedWith('damaged'));
+    });
+  });
+
+  group('hidden systems', () {
+    test('are listed after fetched systems, once, and survive a restart',
+        () async {
+      await http.runWithClient(() async {
+        final state = MyAppState();
+        await pumpEventQueue();
+        state.addHiddenSystem('very-bad');
+        state.addHiddenSystem('sys'); // Later added to the public list.
+        state.updateHiddenSystem('very-bad', 'very-bad', 'RIT');
+        expect(state.allSystems.map((s) => s['id']), ['sys', 'very-bad']);
+        expect(state.allSystems.last['name'], 'RIT');
+        expect(state.allSystems.last['hidden'], isTrue);
+        await pumpEventQueue();
+
+        final restarted = MyAppState();
+        await pumpEventQueue();
+        expect(restarted.hiddenSystems.map((s) => s['id']), ['very-bad', 'sys']);
+
+        restarted.removeHiddenSystem('very-bad');
+        expect(restarted.allSystems.map((s) => s['id']), ['sys']);
+      }, () => FakeApi().client);
+    });
+  });
+
+  test('imported favorites are added in order, or replace the current ones',
+      () async {
+    await http.runWithClient(() async {
+      final state = MyAppState();
+      await pumpEventQueue();
+      state.addFavorite('sys', [talkgroup(1, 'TG1')]);
+
+      final added = state.importFavorites(
+          [favoriteOf(3), favoriteOf(1), favoriteOf(2)],
+          replace: false);
+      expect(added, 2);
+      expect(favoriteIds(state.favorites), [1, 3, 2]);
+
+      state.importFavorites([favoriteOf(2), favoriteOf(4)], replace: true);
+      expect(favoriteIds(state.favorites), [2, 4]);
+      await pumpEventQueue();
+      final prefs = await SharedPreferences.getInstance();
+      expect(favoriteIds(List<Map<String, dynamic>>.from(
+              jsonDecode(prefs.getString('favorites')!))),
+          [2, 4]);
+    }, () => FakeApi().client);
+  });
 
   group('call helpers', () {
     test('flattens transcript objects, null, and missing text', () {
@@ -474,6 +598,211 @@ void main() {
         expect(state.favorites.first['talkgroups'][0]['id'], isNot(1));
         expect(state.favorites, hasLength(3));
       }, () => api.client);
+    });
+
+    group('settings', () {
+      Future<void> openSettings(WidgetTester tester) async {
+        await tester.tap(find.byIcon(Icons.menu));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Settings'));
+        await tester.pumpAndSettle();
+      }
+
+      // Lets a snack bar time out, so no timer is left when the test ends.
+      Future<void> finishMessages(WidgetTester tester) async {
+        await tester.pump(Duration(seconds: 10));
+        await tester.pumpAndSettle();
+      }
+
+      MyAppState stateOf(WidgetTester tester) =>
+          tester.element(find.byType(Scaffold).first).read<MyAppState>();
+
+      testWidgets('a hidden system added in settings opens its talkgroups',
+          (tester) async {
+        final api = FakeApi()
+          ..talkgroupsBySystem['very-bad'] = [talkgroup(100, 'RIT UHF Ops')];
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          await openSettings(tester);
+          await tester.enterText(find.byType(TextField), ' very-bad ');
+          await tester.tap(find.text('Add'));
+          await tester.pumpAndSettle();
+          expect(find.text('Added very-bad to the Systems page.'),
+              findsOneWidget);
+          expect(find.text('ID: very-bad'), findsOneWidget);
+
+          await tester.tap(find.byIcon(Icons.menu));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Systems').last);
+          await tester.pumpAndSettle();
+          expect(find.text('Test System'), findsOneWidget);
+          await tester.tap(find.text('very-bad'));
+          await tester.pumpAndSettle();
+
+          expect(api.talkgroupSystems.last, 'very-bad');
+          expect(find.text('RIT UHF Ops'), findsOneWidget);
+          expect(find.text('very-bad'), findsOneWidget); // Page title.
+          await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('hidden systems still show when the system list fails',
+          (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'hiddenSystems': jsonEncode([
+            {'id': 'very-bad', 'name': 'RIT'}
+          ]),
+        });
+        final client = MockClient((_) async => http.Response('nope', 500));
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          expect(find.text("Couldn't load systems."), findsOneWidget);
+          expect(find.text('RIT'), findsOneWidget);
+        }, () => client);
+      });
+
+      testWidgets('an ID with no talkgroups asks before it is added',
+          (tester) async {
+        final api = FakeApi()..talkgroupsBySystem['typo'] = [];
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          await openSettings(tester);
+          await tester.enterText(find.byType(TextField), 'typo');
+          await tester.tap(find.text('Add'));
+          await tester.pumpAndSettle();
+          expect(find.textContaining('no talkgroups for "typo"'),
+              findsOneWidget);
+          await tester.tap(find.text('Cancel'));
+          await tester.pumpAndSettle();
+          expect(stateOf(tester).hiddenSystems, isEmpty);
+
+          await tester.tap(find.text('Add'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Add Anyway'));
+          await tester.pumpAndSettle();
+          expect(stateOf(tester).hiddenSystems.single['id'], 'typo');
+          await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('bad and duplicate IDs are refused without a lookup',
+          (tester) async {
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          await openSettings(tester);
+          for (final (id, reason) in [
+            ('bad id/x', 'only use letters'),
+            ('sys', 'already on the Systems page'),
+          ]) {
+            await tester.enterText(find.byType(TextField), id);
+            await tester.tap(find.text('Add'));
+            await tester.pumpAndSettle();
+            expect(find.textContaining(reason), findsOneWidget);
+          }
+          expect(api.talkgroupSystems, isEmpty);
+          expect(stateOf(tester).hiddenSystems, isEmpty);
+          await finishMessages(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('a hidden system can be renamed and removed',
+          (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'hiddenSystems': jsonEncode([
+            {'id': 'very-bad', 'name': ''}
+          ]),
+        });
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          await openSettings(tester);
+          await tester.tap(find.byTooltip('Edit'));
+          await tester.pumpAndSettle();
+          await tester.enterText(
+              find.widgetWithText(TextField, 'Display name'), 'RIT');
+          await tester.tap(find.text('Save'));
+          await tester.pumpAndSettle();
+          expect(stateOf(tester).allSystems.last['name'], 'RIT');
+          expect(api.talkgroupSystems, isEmpty); // Same ID, no lookup.
+
+          await tester.tap(find.byTooltip('Remove'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Remove').last);
+          await tester.pumpAndSettle();
+          expect(stateOf(tester).hiddenSystems, isEmpty);
+        }, () => api.client);
+      });
+
+      testWidgets('favorites export and import keep their order',
+          (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'favorites':
+              jsonEncode([favoriteOf(1), favoriteOf(2), favoriteOf(3)]),
+        });
+        final files = FakeBackupFiles();
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage(files: files)));
+          await tester.tap(find.text('Export Favorites'));
+          await tester.pumpAndSettle();
+          expect(favoriteIds(parseFavoritesBackup(files.saved.values.single)),
+              [1, 2, 3]);
+
+          files.toOpen = exportFavorites([favoriteOf(3), favoriteOf(1)]);
+          await tester.tap(find.text('Import Favorites'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Replace'));
+          await tester.pumpAndSettle();
+          expect(favoriteIds(stateOf(tester).favorites), [3, 1]);
+
+          files.toOpen = exportFavorites([favoriteOf(2), favoriteOf(3)]);
+          await tester.tap(find.text('Import Favorites'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Add').last);
+          await tester.pumpAndSettle();
+          expect(favoriteIds(stateOf(tester).favorites), [3, 1, 2]);
+          expect(find.text('Imported 1 favorite. You already had 1 other.'),
+              findsOneWidget);
+          await finishMessages(tester);
+        }, () => FakeApi().client);
+      });
+
+      testWidgets('settings export and import carry hidden systems',
+          (tester) async {
+        final files = FakeBackupFiles()
+          ..toOpen = exportSettings(hiddenSystems: [
+            {'id': 'very-bad', 'name': 'RIT'}
+          ]);
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage(files: files)));
+          await tester.tap(find.text('Import Settings'));
+          await tester.pumpAndSettle();
+          expect(find.text('RIT'), findsOneWidget);
+
+          await tester.tap(find.text('Export Settings'));
+          await tester.pumpAndSettle();
+          expect(
+              parseSettingsBackup(files.saved.values.single)
+                  .hiddenSystems
+                  .single['id'],
+              'very-bad');
+          await finishMessages(tester);
+        }, () => FakeApi().client);
+      });
+
+      testWidgets('importing the wrong kind of file says why', (tester) async {
+        final files = FakeBackupFiles()
+          ..toOpen = exportSettings(hiddenSystems: []);
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage(files: files)));
+          await tester.tap(find.text('Import Favorites'));
+          await tester.pumpAndSettle();
+          expect(find.textContaining('This is a settings backup'),
+              findsOneWidget);
+          expect(stateOf(tester).favorites, isEmpty);
+          await finishMessages(tester);
+        }, () => FakeApi().client);
+      });
     });
 
     group('listener', () {
