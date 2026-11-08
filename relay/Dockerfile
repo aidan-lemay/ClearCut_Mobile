@@ -14,6 +14,7 @@ COPY relay relay
 WORKDIR /src/relay
 RUN dart pub get --offline \
     && dart test \
+    && mkdir -p /out \
     && dart compile exe bin/relay.dart -o /out/relay
 
 # A minimal image: the compiled relay and the few system files it needs.
