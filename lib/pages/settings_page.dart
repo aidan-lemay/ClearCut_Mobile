@@ -57,7 +57,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (id.isEmpty) return 'Enter a system ID.';
     if (!isValidSystemId(id)) {
       return 'System IDs only use letters, numbers, dots, dashes and '
-          'underscores, as in very-bad.';
+          'underscores, as in county-fire.';
     }
     if (appState.isListedSystem(id)) {
       return '"$id" is already on the Systems page.';
@@ -319,7 +319,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   onSubmitted: (_) => _checking ? null : _addSystem(),
                   decoration: InputDecoration(
                     labelText: 'System ID',
-                    hintText: 'e.g. very-bad',
+                    hintText: 'e.g. county-fire',
                     border: OutlineInputBorder(),
                   ),
                 ),

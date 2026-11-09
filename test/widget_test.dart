@@ -200,11 +200,11 @@ void main() {
 
     test('settings keep hidden systems through a round trip', () {
       final parsed = parseSettingsBackup(exportSettings(hiddenSystems: [
-        {'id': 'very-bad', 'name': 'RIT'},
+        {'id': 'county-fire', 'name': 'County Fire'},
         {'id': 'other', 'name': ''},
       ]));
-      expect(parsed.hiddenSystems.map((s) => s['id']), ['very-bad', 'other']);
-      expect(parsed.hiddenSystems.first['name'], 'RIT');
+      expect(parsed.hiddenSystems.map((s) => s['id']), ['county-fire', 'other']);
+      expect(parsed.hiddenSystems.first['name'], 'County Fire');
     });
 
     test('bad files are refused with a reason', () {
@@ -257,19 +257,19 @@ void main() {
       await http.runWithClient(() async {
         final state = MyAppState();
         await pumpEventQueue();
-        state.addHiddenSystem('very-bad');
+        state.addHiddenSystem('county-fire');
         state.addHiddenSystem('sys'); // Later added to the public list.
-        state.updateHiddenSystem('very-bad', 'very-bad', 'RIT');
-        expect(state.allSystems.map((s) => s['id']), ['sys', 'very-bad']);
-        expect(state.allSystems.last['name'], 'RIT');
+        state.updateHiddenSystem('county-fire', 'county-fire', 'County Fire');
+        expect(state.allSystems.map((s) => s['id']), ['sys', 'county-fire']);
+        expect(state.allSystems.last['name'], 'County Fire');
         expect(state.allSystems.last['hidden'], isTrue);
         await pumpEventQueue();
 
         final restarted = MyAppState();
         await pumpEventQueue();
-        expect(restarted.hiddenSystems.map((s) => s['id']), ['very-bad', 'sys']);
+        expect(restarted.hiddenSystems.map((s) => s['id']), ['county-fire', 'sys']);
 
-        restarted.removeHiddenSystem('very-bad');
+        restarted.removeHiddenSystem('county-fire');
         expect(restarted.allSystems.map((s) => s['id']), ['sys']);
       }, () => FakeApi().client);
     });
@@ -958,28 +958,28 @@ void main() {
           (tester) async {
         useTallScreen(tester);
         final api = FakeApi()
-          ..talkgroupsBySystem['very-bad'] = [talkgroup(100, 'RIT UHF Ops')];
+          ..talkgroupsBySystem['county-fire'] = [talkgroup(100, 'Fire Dispatch')];
         await http.runWithClient(() async {
           await pumpApp(tester, MySystemsPage());
           await openSettings(tester);
-          await tester.enterText(find.byType(TextField), ' very-bad ');
+          await tester.enterText(find.byType(TextField), ' county-fire ');
           await tester.tap(find.text('Add'));
           await tester.pumpAndSettle();
-          expect(find.text('Added very-bad to the Systems page.'),
+          expect(find.text('Added county-fire to the Systems page.'),
               findsOneWidget);
-          expect(find.widgetWithText(ListTile, 'very-bad'), findsOneWidget);
+          expect(find.widgetWithText(ListTile, 'county-fire'), findsOneWidget);
 
           await tester.tap(find.byIcon(Icons.menu));
           await tester.pumpAndSettle();
           await tester.tap(find.text('Systems').last);
           await tester.pumpAndSettle();
           expect(find.text('Test System'), findsOneWidget);
-          await tester.tap(find.text('very-bad'));
+          await tester.tap(find.text('county-fire'));
           await tester.pumpAndSettle();
 
-          expect(api.talkgroupSystems.last, 'very-bad');
-          expect(find.text('RIT UHF Ops'), findsOneWidget);
-          expect(find.text('very-bad'), findsOneWidget); // Page title.
+          expect(api.talkgroupSystems.last, 'county-fire');
+          expect(find.text('Fire Dispatch'), findsOneWidget);
+          expect(find.text('county-fire'), findsOneWidget); // Page title.
           await finishMessages(tester);
         }, () => api.client);
       });
@@ -989,14 +989,14 @@ void main() {
         useTallScreen(tester);
         SharedPreferences.setMockInitialValues({
           'hiddenSystems': jsonEncode([
-            {'id': 'very-bad', 'name': 'RIT'}
+            {'id': 'county-fire', 'name': 'County Fire'}
           ]),
         });
         final client = MockClient((_) async => http.Response('nope', 500));
         await http.runWithClient(() async {
           await pumpApp(tester, MySystemsPage());
           expect(find.text("Couldn't load systems."), findsOneWidget);
-          expect(find.text('RIT'), findsOneWidget);
+          expect(find.text('County Fire'), findsOneWidget);
         }, () => client);
       });
 
@@ -1052,7 +1052,7 @@ void main() {
         useTallScreen(tester);
         SharedPreferences.setMockInitialValues({
           'hiddenSystems': jsonEncode([
-            {'id': 'very-bad', 'name': ''}
+            {'id': 'county-fire', 'name': ''}
           ]),
         });
         final api = FakeApi();
@@ -1062,10 +1062,10 @@ void main() {
           await tester.tap(find.byTooltip('Edit'));
           await tester.pumpAndSettle();
           await tester.enterText(
-              find.widgetWithText(TextField, 'Display name'), 'RIT');
+              find.widgetWithText(TextField, 'Display name'), 'County Fire');
           await tester.tap(find.text('Save'));
           await tester.pumpAndSettle();
-          expect(stateOf(tester).allSystems.last['name'], 'RIT');
+          expect(stateOf(tester).allSystems.last['name'], 'County Fire');
           expect(api.talkgroupSystems, isEmpty); // Same ID, no lookup.
 
           await tester.tap(find.byTooltip('Remove'));
@@ -1115,13 +1115,13 @@ void main() {
         useTallScreen(tester);
         final files = FakeBackupFiles()
           ..toOpen = exportSettings(hiddenSystems: [
-            {'id': 'very-bad', 'name': 'RIT'}
+            {'id': 'county-fire', 'name': 'County Fire'}
           ]);
         await http.runWithClient(() async {
           await pumpApp(tester, Scaffold(body: SettingsPage(files: files)));
           await tester.tap(find.text('Import Settings'));
           await tester.pumpAndSettle();
-          expect(find.text('RIT'), findsOneWidget);
+          expect(find.text('County Fire'), findsOneWidget);
 
           await tester.tap(find.text('Export Settings'));
           await tester.pumpAndSettle();
@@ -1129,7 +1129,7 @@ void main() {
               parseSettingsBackup(files.saved.values.single)
                   .hiddenSystems
                   .single['id'],
-              'very-bad');
+              'county-fire');
           await finishMessages(tester);
         }, () => FakeApi().client);
       });
