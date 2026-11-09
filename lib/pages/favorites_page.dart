@@ -54,6 +54,11 @@ class FavoritesPage extends StatelessWidget {
       );
     }
 
+    // Favorites from different systems can share talkgroup names.
+    final systemNames = {
+      for (final system in appState.allSystems) system['id']: system['name']
+    };
+
     return ReorderableListView.builder(
       buildDefaultDragHandles: false,
       itemCount: appState.favorites.length,
@@ -72,6 +77,8 @@ class FavoritesPage extends StatelessWidget {
             child: Icon(Icons.drag_handle),
           ),
           title: Text(talkgroupNames),
+          subtitle:
+              Text(systemNames[favorite['systemId']] ?? favorite['systemId']),
           onTap: () => _open(context, favorite),
           trailing: IconButton(
               tooltip: 'Remove favorite',

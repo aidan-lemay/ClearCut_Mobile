@@ -71,7 +71,13 @@ class _TalkgroupsPageState extends State<TalkgroupsPage> {
                     if (snapshot.hasError) {
                       return _buildError();
                     }
-                    return _buildTalkgroups(snapshot.data ?? []);
+                    final talkgroups = snapshot.data ?? [];
+                    if (talkgroups.isEmpty) {
+                      return Center(
+                        child: Text('No talkgroups found for this system.'),
+                      );
+                    }
+                    return _buildTalkgroups(talkgroups);
                   },
                 ),
     );

@@ -1,0 +1,14 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: relay/Dockerfile
+    image: clearcut-relay
+    container_name: clearcut-relay
+    restart: unless-stopped
+    ports:
+      # Change the left side to use another port on the host.
+      - "8080:8080"
+    volumes:
+      # Access keys, registered phones, and firebase-service-account.json.
+      - ./data:/data

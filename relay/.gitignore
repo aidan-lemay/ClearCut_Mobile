@@ -1,0 +1,4 @@
+.dart_tool/
+data/
+*.json.tmp
+firebase-service-account.json

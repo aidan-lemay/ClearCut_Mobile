@@ -4,6 +4,21 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// Push notifications need a Firebase config, which is kept out of the repo.
+// Builds without it work, with notifications turned off. See the README.
+if (file("google-services.json").exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
+
+// The release signing key is described in android/key.properties, which is
+// kept out of the repo along with the key itself. Without it, release builds
+// are signed with this machine's debug key. See the README.
+def keyProperties = new Properties()
+def keyPropertiesFile = rootProject.file("key.properties")
+if (keyPropertiesFile.exists()) {
+    keyPropertiesFile.withInputStream { keyProperties.load(it) }
+}
+
 android {
     namespace = "com.aidanlemay.clearcut_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -12,6 +27,8 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+        // Needed by flutter_local_notifications.
+        coreLibraryDesugaringEnabled true
     }
 
     defaultConfig {
@@ -24,11 +41,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (keyPropertiesFile.exists()) {
+            release {
+                storeFile = file(keyProperties["storeFile"])
+                storePassword = keyProperties["storePassword"]
+                keyAlias = keyProperties["keyAlias"]
+                keyPassword = keyProperties["keyPassword"]
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.debug
+            signingConfig = keyPropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
         }
     }
 }
@@ -40,8 +68,7 @@ kotlin {
 }
 
 dependencies {
-    implementation "com.google.android.material:material:1.13.0-alpha07" // Add this line
-    // Add other dependencies here if necessary
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }
 
 flutter {

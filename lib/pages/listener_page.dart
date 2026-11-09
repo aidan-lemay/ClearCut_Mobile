@@ -13,7 +13,14 @@ class ListenerPage extends StatefulWidget {
   final List<dynamic> selectedTalkgroups;
   final String currentSystem;
 
-  ListenerPage({required this.selectedTalkgroups, required this.currentSystem});
+  /// A call to mark, such as the one a notification was about.
+  final String? highlightCallId;
+
+  ListenerPage({
+    required this.selectedTalkgroups,
+    required this.currentSystem,
+    this.highlightCallId,
+  });
 
   @override
   _ListenerPageState createState() => _ListenerPageState();
@@ -323,8 +330,22 @@ class _ListenerPageState extends State<ListenerPage>
       if (duration.isNotEmpty) duration,
     ].join(' | ');
 
+    final highlight = widget.highlightCallId;
+    final replaced = call['replacesCallIds'];
+    final isHighlighted = highlight != null &&
+        (callId == highlight ||
+            (replaced is List && replaced.contains(highlight)));
+
     return Card(
+      key: isHighlighted ? ValueKey('highlighted-call') : null,
       margin: EdgeInsets.symmetric(vertical: 8),
+      shape: isHighlighted
+          ? RoundedRectangleBorder(
+              side: BorderSide(
+                  color: Theme.of(context).colorScheme.primary, width: 2),
+              borderRadius: BorderRadius.circular(12),
+            )
+          : null,
       child: ListTile(
         title: Text(
           talkgroupName,
@@ -520,7 +541,7 @@ class _ListenerPageState extends State<ListenerPage>
                                 widget.selectedTalkgroups);
                             _showMessage('Added to favorites!');
                           },
-                          child: Text('Add Talkgroup(s) to Favorites'),
+                          child: Text('Add to Favorites'),
                         ),
                       ),
                     ),
