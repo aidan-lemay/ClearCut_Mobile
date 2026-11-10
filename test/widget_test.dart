@@ -14,6 +14,7 @@ import 'package:clearcut_mobile/services/call_utils.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:clearcut_mobile/services/sse_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -590,6 +591,44 @@ void main() {
           ('sys', 7, 'c1'));
       expect(AlertTarget.fromPayload('nope'), isNull);
       expect(AlertTarget.fromPayload(jsonEncode({'systemId': 'sys'})), isNull);
+    });
+
+    test('a push goes to the most urgent category of the rules it matched',
+        () {
+      AndroidNotificationChannel channel(String ruleId, Importance importance,
+              {bool bypassDnd = false}) =>
+          AndroidNotificationChannel(ruleChannelId(ruleId), ruleId,
+              importance: importance, bypassDnd: bypassDnd);
+      final channels = [
+        channel('quiet', Importance.low),
+        channel('loud', Importance.high),
+        channel('dnd', Importance.high, bypassDnd: true),
+      ];
+      expect(pickAlertChannel('quiet', channels)?.name, 'quiet');
+      expect(pickAlertChannel('quiet,loud', channels)?.name, 'loud');
+      expect(pickAlertChannel('loud,dnd,quiet', channels)?.name, 'dnd');
+      // Deleted rules, and pushes from relays that don't send rule IDs.
+      expect(pickAlertChannel('gone,quiet', channels)?.name, 'quiet');
+      expect(pickAlertChannel('gone', channels), isNull);
+      expect(pickAlertChannel(null, channels), isNull);
+      expect(ruleChannelId('r/a.b'), 'rule_r_a_b');
+    });
+
+    test('rule changes update the notification categories', () async {
+      final api = FakeApi();
+      final updates = <List<String>>[];
+      await http.runWithClient(() async {
+        final controller = NotificationController(FakePush(),
+            onRulesChanged: (rules) =>
+                updates.add([for (final rule in rules) rule.name]));
+        await controller.load();
+        expect(updates.last, isEmpty);
+        final rule = alertRule();
+        await controller.saveRule(rule);
+        expect(updates.last, ['Fires']);
+        await controller.deleteRule(rule.id);
+        expect(updates.last, isEmpty);
+      }, () => api.client);
     });
 
     test('a wrong key or address is reported and nothing is saved', () async {

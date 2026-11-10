@@ -213,6 +213,8 @@ All of these start with `docker compose logs relay`.
 - **Every transcript:** a notification once each call is transcribed.
 - **Transcripts with keywords:** only transcripts containing a keyword. Keywords match whole words and ignore case, so `fire` matches "Fire!" but not "firearm". End a keyword with `*` to match the start of words, like `fire*`. Phrases like `shots fired` work too.
 
+Each push includes the IDs of the rules it matched, so the app can show it in the notification category of the rule the user set as most urgent.
+
 Transcripts only exist for talkgroups that Clearcut transcribes, so the transcript modes never fire for other talkgroups. The app warns about this when making a rule.
 
 The relay opens one Clearcut connection per system, covering the talkgroups that active rules need. It reconnects whenever Clearcut drops the stream, which Clearcut does after about two minutes without calls. Phones that are paused, or rules that are switched off, aren't watched.

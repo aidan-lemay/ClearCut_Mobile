@@ -292,6 +292,17 @@ Future<bool> alertsAllowedFromStorage() async {
   return json['subscribed'] == true && !_isPaused(json);
 }
 
+/// The saved alert rules, for the background handler.
+Future<List<AlertRule>> rulesFromStorage() async {
+  final prefs = await SharedPreferences.getInstance();
+  final stored = prefs.getString(notificationPrefsKey);
+  if (stored == null) return [];
+  final json = jsonDecode(stored) as Map<String, dynamic>;
+  return [
+    for (final rule in json['rules'] as List? ?? []) AlertRule.fromJson(rule)
+  ];
+}
+
 bool _isPaused(Map<String, dynamic> json) {
   if (json['paused'] != true) return false;
   final until = json['pausedUntil'];
@@ -305,7 +316,10 @@ class NotificationController extends ChangeNotifier {
   /// Shows a push that arrived while the app is open.
   final void Function(Map<String, String> data)? showAlert;
 
-  NotificationController(this.push, {this.showAlert});
+  /// Keeps each rule's Android notification category up to date.
+  final void Function(List<AlertRule> rules)? onRulesChanged;
+
+  NotificationController(this.push, {this.showAlert, this.onRulesChanged});
 
   String address = '';
   int? port;
@@ -370,6 +384,7 @@ class NotificationController extends ChangeNotifier {
       print('Error loading notification settings: $error');
     }
     notifyListeners();
+    onRulesChanged?.call(rules);
 
     _subscriptions.add(push.onTokenRefresh.listen((_) => sync()));
     _subscriptions.add(push.onMessage.listen((data) {
@@ -409,6 +424,7 @@ class NotificationController extends ChangeNotifier {
   Future<void> _changed() async {
     await _save();
     notifyListeners();
+    onRulesChanged?.call(rules);
     if (subscribed) await sync();
   }
 
