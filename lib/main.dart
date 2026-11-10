@@ -113,6 +113,9 @@ class MyAppState extends ChangeNotifier {
           push,
           showAlert: (data) => showAlert(data).catchError(
               (Object error) => print('Error showing alert: $error')),
+          onRulesChanged: (rules) => syncRuleChannels(rules).catchError(
+              (Object error) =>
+                  print('Error updating notification categories: $error')),
         ) {
     fetchSystems();
     loadFavorites();

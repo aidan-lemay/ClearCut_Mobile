@@ -390,6 +390,17 @@ class _NotificationSettingsSectionState
           ),
         ),
       ),
+      if (controller.rules.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          child: Text(
+            'Each rule has its own notification category, so it can have '
+            'its own sound, vibration, or Do Not Disturb setting. Change them '
+            'in Android Settings > Apps > Clearcut Mobile > Notifications.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.hintColor),
+          ),
+        ),
     ];
   }
 }

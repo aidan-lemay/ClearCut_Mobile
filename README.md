@@ -79,6 +79,12 @@ Select **Add Rule**, then choose:
 
 Switch a rule off to stop it without deleting it.
 
+### Sounds and Do Not Disturb for each rule
+
+Each rule gets its own notification category in Android, named after the rule, under **Alert rules** in **Android Settings > Apps > Clearcut Mobile > Notifications**. Give each category its own sound, vibration, or importance, or let it override Do Not Disturb. For example, make an "every transcript" rule vibrate only, and let a `fire` keyword rule ring through Do Not Disturb.
+
+When one call matches several rules, the notification uses the matched rule whose category is the most urgent: the highest importance, then one that overrides Do Not Disturb. If a call's transcript matches a more urgent rule than the call did, the notification alerts again with that rule's sound instead of updating silently. Deleting a rule removes its category. Test notifications use the **Other alerts** category.
+
 Tapping a notification opens that talkgroup with the call outlined. Nothing plays until you choose to.
 
 ### Pausing and unsubscribing
@@ -91,7 +97,7 @@ Tapping a notification opens that talkgroup with the call outlined. Nothing play
 - Check that **Send Test Notification** works. If it does, the rules are the place to look: check the talkgroups, and that keyword rules use talkgroups with transcripts.
 - If Settings says **The relay isn't up to date**, select **Retry**. The relay may be unreachable from where you are.
 - If it says **The relay can't send notifications yet**, the relay has no Firebase key. Tell its operator.
-- Check that notifications for Clearcut Mobile are allowed in Android's settings.
+- Check that notifications for Clearcut Mobile, and the rule's own category, are allowed in Android's settings.
 - Some phones restrict background apps heavily. If notifications only show up when you open the app, set Clearcut Mobile's battery usage to **Unrestricted** in Android's app settings.
 - **"That address doesn't look like a Clearcut relay"** usually means something between you and the relay, such as a login page or bot protection, answered instead. Tell the relay's operator.
 

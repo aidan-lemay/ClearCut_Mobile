@@ -236,11 +236,29 @@ class Relay {
             : text,
         'rules': _cap(matched.map((rule) => rule.name).join(', '), 200),
         'keywords': _cap(keywords.join(', '), 200),
+        // The app shows the push in the notification category of one of
+        // these rules, so each rule's sound and Do Not Disturb settings can
+        // differ.
+        'ruleIds': _idList(matched.map((rule) => rule.id)),
         if (startTime != null) 'startTime': '$startTime',
       };
       sends.add(sendTo(device, data));
     }
     await Future.wait(sends);
+  }
+
+  /// Joins [ids] with commas, leaving out whole IDs past 1000 characters so
+  /// the push stays under FCM's 4 KB limit.
+  static String _idList(Iterable<String> ids) {
+    final kept = <String>[];
+    var length = 0;
+    for (final id in ids) {
+      if (id.contains(',')) continue;
+      length += id.length + 1;
+      if (length > 1001) break;
+      kept.add(id);
+    }
+    return kept.join(',');
   }
 
   /// Sends one push, dropping the phone if its token is no longer valid.

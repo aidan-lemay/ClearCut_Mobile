@@ -58,5 +58,11 @@ Future<void> firebaseBackgroundMessage(RemoteMessage message) async {
   // The relay may not have heard about an unsubscribe or pause yet.
   if (!await alertsAllowedFromStorage()) return;
   await initAlertNotifications();
+  // Rules saved before this version of the app have no categories yet.
+  try {
+    await syncRuleChannels(await rulesFromStorage());
+  } catch (error) {
+    print('Error updating notification categories: $error');
+  }
   await showAlert(_strings(message.data));
 }

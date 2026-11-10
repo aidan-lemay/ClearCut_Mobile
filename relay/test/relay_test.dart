@@ -387,6 +387,7 @@ void main() {
       final data = push.sent.single.$2;
       expect(data['rules'], 'Fires, MVAs');
       expect(data['keywords'], 'fire, smoke, mva');
+      expect(data['ruleIds'], 'r1,r2');
     });
 
     test('paused phones and other systems get nothing', () async {
@@ -437,6 +438,7 @@ void main() {
       await relay.handleEvent('sys', transcript('c1', 1, 'fire ' * 1000));
       final data = push.sent.single.$2;
       expect(data['rules']!.length, lessThanOrEqualTo(200));
+      expect(data['ruleIds']!.length, lessThanOrEqualTo(1000));
       expect(utf8.encode(jsonEncode(data)).length, lessThan(4096 - 200));
     });
 
