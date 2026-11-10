@@ -97,6 +97,7 @@ Future<List<AndroidNotificationChannel>> _channels() async {
   try {
     return await _android?.getNotificationChannels() ?? [];
   } catch (error) {
+    print('Couldn\'t read notification categories: $error');
     return [];
   }
 }
