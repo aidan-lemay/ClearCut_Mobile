@@ -125,9 +125,13 @@ server {
     client_max_body_size 1m;
 
     location / {
-        # nginx in Docker, on the same network as the relay:
-        proxy_pass http://clearcut-relay:8080;
-        # nginx installed on the host:
+        # nginx in Docker, on the same network as the relay. Looking the
+        # relay up through Docker's DNS on each request means a rebuilt relay,
+        # which gets a new address, is found without reloading nginx.
+        resolver 127.0.0.11 valid=10s;
+        set $relay http://clearcut-relay:8080;
+        proxy_pass $relay;
+        # nginx installed on the host instead:
         # proxy_pass http://127.0.0.1:8080;
 
         proxy_http_version 1.1;
