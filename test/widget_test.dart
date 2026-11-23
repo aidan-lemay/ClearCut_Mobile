@@ -984,7 +984,7 @@ void main() {
           isFalse);
     });
 
-    test('settings backups carry the server and rules but never the key',
+    test('settings backups carry the relay and key, and connect a new phone',
         () async {
       final api = FakeApi();
       await http.runWithClient(() async {
@@ -994,18 +994,92 @@ void main() {
         await controller.saveRule(alertRule());
 
         final file = exportSettings(
-            hiddenSystems: [], notifications: controller.toBackupJson());
-        expect(file, isNot(contains('good-key')));
+          hiddenSystems: [],
+          notifications: controller.toBackupJson(),
+          startPage: StartPage.favorites,
+        );
+        expect(file, contains('good-key'));
+        // Rules have their own backup now.
+        expect(file, isNot(contains('Fires')));
 
+        final backup = parseSettingsBackup(file);
+        expect(backup.startPage!.kind, StartPageKind.favorites);
+
+        // A new phone with its own rule: replacing settings connects it and
+        // leaves the rule alone.
+        SharedPreferences.setMockInitialValues({});
         final fresh = NotificationController(FakePush());
-        final backup = parseSettingsBackup(file).notifications;
-        expect(await fresh.importBackup(backup, replace: false), 1);
+        await fresh.load();
+        await fresh.saveRule(alertRule(name: 'Mine'));
+        expect(await fresh.importBackup(backup.notifications, replace: true),
+            0);
+        expect(
+            await fresh.importConnection(backup.notifications, replace: true),
+            isNull);
+        expect(fresh.subscribed, isTrue);
         expect(fresh.address, 'relay.test');
         expect(fresh.port, 8443);
-        expect(fresh.key, isEmpty);
-        expect(fresh.rules.single.keywords, ['fire']);
-        // The same rule isn't added twice.
-        expect(await fresh.importBackup(backup, replace: false), 0);
+        expect(fresh.key, 'good-key');
+        expect(fresh.rules.single.name, 'Mine');
+        expect(api.relayPuts.last['rules'].single['name'], 'Mine');
+      }, () => api.client);
+    });
+
+    test('a connected phone keeps its relay when settings are added', () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        final phone = NotificationController(FakePush());
+        await phone.load();
+        await phone.connect('relay.test', null, 'good-key');
+
+        final other = NotificationBackup(
+            address: 'other.test', port: null, key: 'other-key');
+        await phone.importBackup(other, replace: false);
+        expect(await phone.importConnection(other, replace: false), isNull);
+        expect(phone.address, 'relay.test');
+        expect(phone.key, 'good-key');
+        expect(phone.subscribed, isTrue);
+      }, () => api.client);
+    });
+
+    test('a key that can\'t connect is still filled in to try again',
+        () async {
+      final api = FakeApi()..relayDown = true;
+      await http.runWithClient(() async {
+        final phone = NotificationController(FakePush());
+        await phone.load();
+        final error = await phone.importConnection(
+            NotificationBackup(address: 'relay.test', key: 'good-key'),
+            replace: false);
+        expect(error, contains("Couldn't reach"));
+        expect(phone.subscribed, isFalse);
+        expect(phone.address, 'relay.test');
+        expect(phone.key, 'good-key');
+      }, () => api.client);
+    });
+
+    test('older settings backups still bring their rules', () async {
+      final api = FakeApi();
+      await http.runWithClient(() async {
+        // As exported before keys and start pages were included.
+        final old = exportSettings(hiddenSystems: [], notifications: {
+          'address': 'relay.test',
+          'port': null,
+          'rules': [alertRule().toJson()],
+        });
+        final backup = parseSettingsBackup(old);
+        expect(backup.startPage, isNull);
+        expect(backup.notifications.key, isEmpty);
+
+        final phone = NotificationController(FakePush());
+        await phone.load();
+        expect(await phone.importBackup(backup.notifications, replace: false),
+            1);
+        expect(phone.address, 'relay.test');
+        expect(
+            await phone.importConnection(backup.notifications, replace: false),
+            isNull);
+        expect(phone.subscribed, isFalse);
       }, () => api.client);
     });
   });
@@ -1654,6 +1728,59 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text('Pause Notifications'), findsOneWidget);
           expect(api.relayPuts.last['paused'], isFalse);
+        }, () => api.client);
+      });
+
+      testWidgets('settings carry the start page and relay key to a new phone',
+          (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi();
+        final files = FakeBackupFiles();
+        Future<void> pumpWith(Map<String, Object> stored) async {
+          SharedPreferences.setMockInitialValues(stored);
+          await tester.pumpWidget(ChangeNotifierProvider(
+            create: (_) => MyAppState(push: FakePush()),
+            child: MaterialApp(home: Scaffold(body: SettingsPage(files: files))),
+          ));
+          await tester.pumpAndSettle();
+        }
+
+        await http.runWithClient(() async {
+          await pumpWith({
+            'startPage': jsonEncode(StartPage.favorites.toJson()),
+            notificationPrefsKey: jsonEncode({
+              'address': 'relay.test',
+              'port': null,
+              'key': 'good-key',
+              'subscribed': true,
+              'rules': [alertRule().toJson()],
+            }),
+          });
+          await tester.tap(find.text('Export Settings'));
+          await tester.pumpAndSettle();
+          expect(find.textContaining('keep it private'), findsOneWidget);
+          final file = files.saved.values.single;
+          expect(file, contains('good-key'));
+          expect(file, isNot(contains('Fires')));
+          await finishMessages(tester);
+
+          // A new phone.
+          await tester.pumpWidget(SizedBox());
+          await pumpWith({});
+          files.toOpen = file;
+          await tester.tap(find.text('Import Settings'));
+          await tester.pumpAndSettle();
+          expect(
+              find.text('Imported your start page. Connected to relay.test '
+                  'for notifications.'),
+              findsOneWidget);
+          final state = tester
+              .element(find.byType(SettingsPage))
+              .read<MyAppState>();
+          expect(state.startPage.kind, StartPageKind.favorites);
+          expect(state.notifications.subscribed, isTrue);
+          expect(state.notifications.key, 'good-key');
+          await finishMessages(tester);
         }, () => api.client);
       });
     });

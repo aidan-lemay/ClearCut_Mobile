@@ -12,7 +12,7 @@ Your favorites, hidden systems, settings, alert rules and start page are stored 
 
 Audio you download is saved where you choose. Links you copy go to your phone's clipboard. Neither is sent to us.
 
-If you export a backup, the file goes wherever you save it. Backups never include your access key.
+If you export a backup, the file goes wherever you save it. A settings backup includes your access key, so keep it somewhere private; favorites and alert rule backups don't include it.
 
 ## Listening to calls
 

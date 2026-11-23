@@ -44,18 +44,20 @@ Some Clearcut systems aren't in the public list. If you know a system's ID, add 
 **Settings > Backup** saves to and loads from files you choose, such as in Downloads or a cloud drive:
 
 - **Export Favorites / Import Favorites:** your favorites, in order.
-- **Export Settings / Import Settings:** hidden systems, the notification server address, and alert rules. Your access key is never included, so a settings file is safe to keep in a cloud drive.
-- **Export Alert Rules / Import Alert Rules:** just your alert rules, for sharing them with someone else or copying them to another phone. Importing them doesn't change your notification server or anything else.
+- **Export Settings / Import Settings:** hidden systems, your start page, and your notification server and access key. Importing a settings file with a key connects that phone to the relay. **The file contains your access key, so keep it private:** anyone with it can use the relay as you. Alert rules aren't included; they have their own export.
+- **Export Alert Rules / Import Alert Rules:** just your alert rules, for sharing them with someone else or copying them to another phone. The file has no access key, so it's safe to share. Importing it doesn't change your notification server or anything else.
 
-When importing into an app that already has favorites or settings, you choose whether to replace them or add the new ones after them. Items you already have aren't duplicated.
+When importing into an app that already has favorites or settings, you choose whether to replace them or add the new ones after them. Items you already have aren't duplicated. Adding settings keeps your current start page if you've chosen one, and keeps a phone that's already connected to a relay as it is.
+
+Settings files from earlier versions of the app have alert rules and no access key. They still import, rules included.
 
 ### Moving to a new phone or reinstalling
 
 Android's automatic backup and phone-to-phone transfer are turned off for this app, because they would copy your access key and a device ID that must be unique to each phone. To move your setup:
 
-1. On the old phone, use **Export Favorites** and **Export Settings**.
-2. On the new phone, install the app and use **Import Favorites** and **Import Settings**.
-3. If you use notifications, enter your access key in **Settings > Notifications** and select **Connect**. On the old phone, select **Unsubscribe** if you still have it.
+1. On the old phone, use **Export Favorites**, **Export Settings** and **Export Alert Rules**.
+2. On the new phone, install the app and use **Import Favorites**, **Import Settings** and **Import Alert Rules**. Importing settings connects the new phone for notifications, using the access key in the file.
+3. On the old phone, select **Unsubscribe** in **Settings > Notifications** if you still have it.
 
 Do the same if you ever need to uninstall the app, for example to install a build signed with a different key.
 
@@ -112,7 +114,7 @@ Tapping a notification opens that talkgroup with the call outlined. Nothing play
 - **No accounts or analytics.** The app talks to Clearcut directly for systems, calls and audio, and to the relay only if you set up notifications.
 - **What the relay keeps:** your phone's push token, your alert rules, whether you're paused, and when you last got a notification. Nothing else about you or your phone. Its operator can see these, and which key your phone uses.
 - **What Google sees:** notifications travel through Firebase Cloud Messaging, so Google handles their content: the talkgroup name and transcript text.
-- **Your access key** is stored only in the app's private storage, isn't included in backups, and is sent only to the relay you entered.
+- **Your access key** is stored in the app's private storage and sent only to the relay you entered. It's also in settings backups you export, so keep those files private. Favorites and alert rule backups don't include it.
 - **Files you import** are checked before use, and system IDs in them are limited to plain characters, since they end up in web addresses.
 
 ## Building and developing locally

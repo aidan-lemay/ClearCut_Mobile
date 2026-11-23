@@ -3,6 +3,7 @@ import 'package:clearcut_mobile/pages/notification_settings.dart';
 import 'package:clearcut_mobile/pages/start_page_settings.dart';
 import 'package:clearcut_mobile/services/backup.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
+import 'package:clearcut_mobile/services/start_page.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -208,8 +209,9 @@ class _SettingsPageState extends State<SettingsPage> {
       exportSettings(
         hiddenSystems: appState.hiddenSystems,
         notifications: appState.notifications.toBackupJson(),
+        startPage: appState.startPage,
       ),
-      'Settings saved.',
+      'Settings saved. The file has your access key, so keep it private.',
     );
   }
 
@@ -224,31 +226,59 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     final appState = context.read<MyAppState>();
+    final notifications = appState.notifications;
     final systems = backup.hiddenSystems;
+    // Only backups from older versions have rules in them.
     final rules = backup.notifications.rules;
     final hasCurrent = appState.hiddenSystems.isNotEmpty ||
-        appState.notifications.rules.isNotEmpty;
+        (rules.isNotEmpty && notifications.rules.isNotEmpty) ||
+        notifications.subscribed ||
+        appState.startPage.kind != StartPageKind.systems;
     final replace = await _askReplace('settings', 'settings', hasCurrent);
     if (replace == null || !mounted) return;
+
     final addedSystems =
         appState.importHiddenSystems(systems, replace: replace);
-    final addedRules = await appState.notifications
-        .importBackup(backup.notifications, replace: replace);
+    final addedRules =
+        await notifications.importBackup(backup.notifications, replace: replace);
+    final startPage = backup.startPage;
+    final setStartPage = startPage != null &&
+        (replace || appState.startPage.kind == StartPageKind.systems) &&
+        startPage.toJson().toString() != appState.startPage.toJson().toString();
+    if (setStartPage) appState.setStartPage(startPage);
+
+    final wasConnected = notifications.subscribed;
+    final previousAddress = notifications.address;
+    final connectError = await notifications.importConnection(
+        backup.notifications,
+        replace: replace);
     if (!mounted) return;
+    final connected = notifications.subscribed &&
+        (!wasConnected || notifications.address != previousAddress) &&
+        connectError == null;
 
     final parts = [
       if (addedSystems > 0)
         _count(addedSystems, 'hidden system', 'hidden systems'),
       if (addedRules > 0) _count(addedRules, 'alert rule', 'alert rules'),
+      if (setStartPage) 'your start page',
     ];
-    if (parts.isEmpty) {
-      _showMessage(systems.isEmpty && rules.isEmpty
-          ? 'Imported settings.'
-          : 'You already had everything in this file.');
-    } else {
-      _showMessage('Imported ${parts.join(' and ')}.');
-    }
+    final imported = parts.isEmpty
+        ? (connected || connectError != null
+            ? ''
+            : 'You already had everything in this file.')
+        : 'Imported ${_joinAnd(parts)}.';
+    final connection = connectError != null
+        ? 'Couldn\'t connect to the relay: $connectError'
+        : connected
+            ? 'Connected to ${notifications.address} for notifications.'
+            : '';
+    _showMessage([imported, connection].where((s) => s.isNotEmpty).join(' '));
   }
+
+  static String _joinAnd(List<String> parts) => parts.length < 2
+      ? parts.join()
+      : '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
 
   Future<void> _exportAlertRules() async {
     final rules = context.read<MyAppState>().notifications.rules;
@@ -415,15 +445,16 @@ class _SettingsPageState extends State<SettingsPage> {
         ListTile(
           leading: Icon(Icons.file_upload),
           title: Text('Export Settings'),
-          subtitle: Text('Save hidden systems, notification server and alert '
-              'rules to a file. Your access key isn\'t included.'),
+          subtitle: Text('Save hidden systems, your start page, and your '
+              'notification server and access key to a file. Keep it private, '
+              'since it has your key. Alert rules have their own export.'),
           onTap: _exportSettings,
         ),
         ListTile(
           leading: Icon(Icons.file_download),
           title: Text('Import Settings'),
-          subtitle: Text('Load hidden systems, notification server and alert '
-              'rules from a file'),
+          subtitle: Text('Load hidden systems, your start page, and your '
+              'notification server and access key from a file'),
           onTap: _importSettings,
         ),
         ListTile(

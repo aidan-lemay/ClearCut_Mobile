@@ -578,26 +578,35 @@ class NotificationController extends ChangeNotifier {
     }
   }
 
-  /// For settings backups. The access key is left out on purpose: a backup
-  /// file is easy to share by mistake.
+  /// The relay connection, for settings backups: the address, port and
+  /// access key, so a new phone can connect straight away. Alert rules have
+  /// their own backup.
   Map<String, dynamic> toBackupJson() => {
         'address': address,
         'port': port,
-        'rules': [for (final rule in rules) rule.toJson()],
+        'key': key,
       };
 
   /// Imports a backup's server and rules. Adding keeps the current server if
   /// there is one and skips rules already present. Returns how many rules
   /// were added.
+  ///
+  /// Settings backups no longer carry rules, but older ones do, and alert
+  /// rule backups use this too. The access key is applied separately, by
+  /// [importConnection], since it means registering with the relay.
   Future<int> importBackup(NotificationBackup backup,
       {required bool replace}) async {
-    if (replace || address.isEmpty) {
+    // A backup with a key connects through importConnection instead, and a
+    // connected phone's relay is only changed by connecting.
+    if (backup.key.isEmpty && !subscribed && (replace || address.isEmpty)) {
       if (backup.address.isNotEmpty) {
         address = backup.address;
         port = backup.port;
       }
     }
-    if (replace) rules = [];
+    // Only a file with rules replaces them: settings backups no longer carry
+    // any, and replacing settings mustn't wipe the rules.
+    if (replace && backup.rules.isNotEmpty) rules = [];
     final ids = rules.map((rule) => rule.id).toSet();
     final added = [
       for (final rule in backup.rules)
@@ -607,14 +616,47 @@ class NotificationController extends ChangeNotifier {
     await _changed();
     return added.length;
   }
+
+  /// Connects to the relay in a settings backup, if it has an access key.
+  /// Adding keeps a phone that's already connected as it is. Returns an
+  /// error message, or null if it connected or there was nothing to do.
+  ///
+  /// If it can't connect, such as when offline, the address and key are
+  /// still filled in, so Connect can be tried again later.
+  Future<String?> importConnection(NotificationBackup backup,
+      {required bool replace}) async {
+    if (backup.key.isEmpty || backup.address.isEmpty) return null;
+    if (subscribed && !replace) return null;
+    if (subscribed &&
+        address == backup.address &&
+        port == backup.port &&
+        key == backup.key) {
+      return null;
+    }
+    final error = await connect(backup.address, backup.port, backup.key);
+    if (error != null && !subscribed) {
+      address = backup.address;
+      port = backup.port;
+      key = backup.key;
+      await _save();
+      notifyListeners();
+    }
+    return error;
+  }
 }
 
 /// The notification part of a settings backup.
 class NotificationBackup {
   final String address;
   final int? port;
+
+  /// Empty in backups from before keys were included.
+  final String key;
+
+  /// Only in older settings backups, and in alert rule backups.
   final List<AlertRule> rules;
-  NotificationBackup({this.address = '', this.port, this.rules = const []});
+  NotificationBackup(
+      {this.address = '', this.port, this.key = '', this.rules = const []});
 
   /// Throws [FormatException] if [json] is damaged.
   factory NotificationBackup.fromJson(Object? json) {
@@ -622,15 +664,18 @@ class NotificationBackup {
     if (json is! Map) throw FormatException('Damaged notification settings.');
     final address = json['address'];
     final port = json['port'];
+    final key = json['key'];
     final rules = json['rules'] ?? [];
     if ((address != null && address is! String) ||
         (port != null && port is! int) ||
+        (key != null && key is! String) ||
         rules is! List) {
       throw FormatException('Damaged notification settings.');
     }
     return NotificationBackup(
       address: address ?? '',
       port: port,
+      key: (key as String? ?? '').trim(),
       rules: [for (final rule in rules) AlertRule.fromJson(rule)],
     );
   }

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:clearcut_core/call_utils.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
+import 'package:clearcut_mobile/services/start_page.dart';
 
 export 'package:clearcut_core/call_utils.dart' show isValidSystemId;
 import 'package:file_picker/file_picker.dart';
@@ -106,21 +107,28 @@ List<Map<String, dynamic>> parseFavoritesBackup(String text) {
 class SettingsBackup {
   final List<Map<String, dynamic>> hiddenSystems;
   final NotificationBackup notifications;
+
+  /// Null in backups from before the start page was included.
+  final StartPage? startPage;
   SettingsBackup(
-      {required this.hiddenSystems, NotificationBackup? notifications})
+      {required this.hiddenSystems,
+      NotificationBackup? notifications,
+      this.startPage})
       : notifications = notifications ?? NotificationBackup();
 }
 
-/// [notifications] is the relay address and alert rules. The access key is
-/// never part of a backup.
+/// [notifications] is the relay connection, including the access key, so a
+/// settings backup should be kept private. Alert rules have their own backup.
 String exportSettings({
   required List<Map<String, dynamic>> hiddenSystems,
   Map<String, dynamic>? notifications,
+  StartPage? startPage,
 }) =>
     _encode(settingsBackupKind, {
       'settings': {
         'hiddenSystems': hiddenSystems,
         if (notifications != null) 'notifications': notifications,
+        if (startPage != null) 'startPage': startPage.toJson(),
       },
     });
 
@@ -147,8 +155,14 @@ SettingsBackup parseSettingsBackup(String text) {
   } on FormatException {
     throw damaged;
   }
+  final startPage = settings['startPage'];
   return SettingsBackup(
-      hiddenSystems: hiddenSystems, notifications: notifications);
+    hiddenSystems: hiddenSystems,
+    notifications: notifications,
+    // A damaged start page falls back to Systems rather than failing the
+    // whole import.
+    startPage: startPage == null ? null : StartPage.fromJson(startPage),
+  );
 }
 
 /// Alert rules on their own, for sharing rules without the rest of the
