@@ -28,7 +28,12 @@ Updates install over the top and keep your data, as long as they're signed with 
 - **Systems** lists the radio systems on Clearcut. Pick one to see its talkgroups.
 - **Talkgroups** can be searched by name, description or ID. **Show only transcribed talkgroups** hides those without transcripts. Tap a talkgroup to listen to it, or tick several and select **Listen to Selected**.
 - **Stream** shows calls as they happen, newest first, and loads older calls as you scroll. Tap play on a call to hear it. **Search Calls** searches the transcripts, looking back through older calls if needed. Calls without a transcript have **Transcribe Call**, which asks Clearcut to transcribe that call.
+- **Long press a call** for more:
+  - **Copy Audio Link** copies a link to the call's audio, to paste into a message or a browser.
+  - **Download Audio** saves the call's audio to a file you choose, such as in Downloads.
+  - **Correct Transcript** lets you fix a transcript's mistakes, or write one for a call that hasn't been transcribed. Corrections are sent to Clearcut Mobile's server to make transcripts more accurate, along with a random ID for this install of the app and your IP address, which are used to stop spam. No account or access key is needed. If you're offline, the correction is kept and sent later.
 - **Favorites** saves a talkgroup, or a group of talkgroups, from the Stream page with **Add to Favorites**. Open them from the heart icon at the top of any page. Drag the handles to reorder them, or delete them with the bin icon.
+- **Settings > Start Page** picks where the app opens: the Systems list, your Favorites, one system's talkgroups, or straight into listening to a favorite or talkgroups you choose. Back from the start page goes to Systems. Opening the app from a notification still goes to that notification's call.
 
 ### Hidden systems
 
@@ -40,6 +45,7 @@ Some Clearcut systems aren't in the public list. If you know a system's ID, add 
 
 - **Export Favorites / Import Favorites:** your favorites, in order.
 - **Export Settings / Import Settings:** hidden systems, the notification server address, and alert rules. Your access key is never included, so a settings file is safe to keep in a cloud drive.
+- **Export Alert Rules / Import Alert Rules:** just your alert rules, for sharing them with someone else or copying them to another phone. Importing them doesn't change your notification server or anything else.
 
 When importing into an app that already has favorites or settings, you choose whether to replace them or add the new ones after them. Items you already have aren't duplicated.
 

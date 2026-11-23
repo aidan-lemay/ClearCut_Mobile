@@ -16,6 +16,15 @@ const backupVersion = 1;
 
 const favoritesBackupKind = 'favorites';
 const settingsBackupKind = 'settings';
+const alertRulesBackupKind = 'alertRules';
+
+/// What each kind of backup is called, and the button that imports it, for
+/// telling the user they picked the wrong kind of file.
+const _kindNames = {
+  favoritesBackupKind: ('a favorites backup', 'Import Favorites'),
+  settingsBackupKind: ('a settings backup', 'Import Settings'),
+  alertRulesBackupKind: ('an alert rules backup', 'Import Alert Rules'),
+};
 
 /// A backup file that can't be imported. [message] is written for the user.
 class BackupException implements Exception {
@@ -47,9 +56,10 @@ Map<String, dynamic> _decode(String text, String kind) {
     throw BackupException("This file isn't a Clearcut Mobile backup.");
   }
   if (decoded['kind'] != kind) {
-    throw BackupException(kind == favoritesBackupKind
-        ? 'This is a settings backup. Use Import Settings for it.'
-        : 'This is a favorites backup. Use Import Favorites for it.');
+    final other = _kindNames[decoded['kind']];
+    throw BackupException(other == null
+        ? "This backup can't be imported here."
+        : 'This is ${other.$1}. Use ${other.$2} for it.');
   }
   final version = decoded['version'];
   if (version is! int || version > backupVersion) {
@@ -139,6 +149,22 @@ SettingsBackup parseSettingsBackup(String text) {
   }
   return SettingsBackup(
       hiddenSystems: hiddenSystems, notifications: notifications);
+}
+
+/// Alert rules on their own, for sharing rules without the rest of the
+/// settings. The relay address and access key aren't included.
+String exportAlertRules(List<AlertRule> rules) => _encode(
+    alertRulesBackupKind, {'rules': [for (final rule in rules) rule.toJson()]});
+
+List<AlertRule> parseAlertRulesBackup(String text) {
+  final rules = _decode(text, alertRulesBackupKind)['rules'];
+  final damaged = BackupException('The alert rules in this file are damaged.');
+  if (rules is! List) throw damaged;
+  try {
+    return [for (final rule in rules) AlertRule.fromJson(rule)];
+  } on FormatException {
+    throw damaged;
+  }
 }
 
 

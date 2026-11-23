@@ -1,6 +1,9 @@
 import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/favorites_page.dart';
+import 'package:clearcut_mobile/services/audio_files.dart';
+import 'package:clearcut_mobile/services/transcript_corrections.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
@@ -16,10 +19,14 @@ class ListenerPage extends StatefulWidget {
   /// A call to mark, such as the one a notification was about.
   final String? highlightCallId;
 
+  /// Where downloaded call audio is saved.
+  final AudioFiles audioFiles;
+
   ListenerPage({
     required this.selectedTalkgroups,
     required this.currentSystem,
     this.highlightCallId,
+    this.audioFiles = const DeviceAudioFiles(),
   });
 
   @override
@@ -308,9 +315,112 @@ class _ListenerPageState extends State<ListenerPage>
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    // Clears queued messages too, so a result isn't stuck behind a progress
+    // message such as "Downloading audio...".
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// The actions a long press on a call offers.
+  Future<void> _showCallActions(Map<String, dynamic> call) async {
+    final audioFile = call['audioFile'] as String?;
+    final action = await showModalBottomSheet<void Function()>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.link),
+              title: Text('Copy Audio Link'),
+              enabled: audioFile != null,
+              onTap: () => Navigator.of(context).pop(() => _copyAudioLink(call)),
+            ),
+            ListTile(
+              leading: Icon(Icons.download),
+              title: Text('Download Audio'),
+              enabled: audioFile != null,
+              onTap: () => Navigator.of(context).pop(() => _downloadAudio(call)),
+            ),
+            ListTile(
+              leading: Icon(Icons.edit_note),
+              title: Text('Correct Transcript'),
+              enabled: call['id'] is String,
+              onTap: () =>
+                  Navigator.of(context).pop(() => _correctTranscript(call)),
+            ),
+          ],
+        ),
+      ),
     );
+    // Run once the sheet has closed, so messages and dialogs show over the page.
+    if (mounted) action?.call();
+  }
+
+  Future<void> _copyAudioLink(Map<String, dynamic> call) async {
+    final audioFile = call['audioFile'] as String;
+    await Clipboard.setData(ClipboardData(text: audioUrlFor(audioFile)));
+    _showMessage('Audio link copied.');
+  }
+
+  Future<void> _downloadAudio(Map<String, dynamic> call) async {
+    final audioFile = call['audioFile'] as String;
+    final fileName = audioFileName(audioFile);
+    _showMessage('Downloading audio...');
+    final Uint8List bytes;
+    try {
+      final response = await http
+          .get(Uri.parse(audioUrlFor(audioFile)))
+          .timeout(audioDownloadTimeout);
+      if (response.statusCode != 200) {
+        throw http.ClientException('Audio returned ${response.statusCode}');
+      }
+      bytes = response.bodyBytes;
+    } catch (error) {
+      print('Error downloading audio: $error');
+      _showMessage("Couldn't download that call's audio.");
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    try {
+      final saved = await widget.audioFiles
+          .save(fileName, bytes, audioMimeType(fileName));
+      if (saved) _showMessage('Audio saved.');
+    } catch (error) {
+      print('Error saving audio: $error');
+      _showMessage("Couldn't save the audio.");
+    }
+  }
+
+  Future<void> _correctTranscript(Map<String, dynamic> call) async {
+    final original = call['transcript'] as String;
+    final corrected = await showDialog<String>(
+      context: context,
+      builder: (context) => _CorrectTranscriptDialog(original: original),
+    );
+    if (corrected == null || !mounted) return;
+    try {
+      final outcome = await TranscriptCorrections.submit(TranscriptCorrection(
+        callId: call['id'] as String,
+        systemId: widget.currentSystem,
+        talkgroupId: call['talkgroup'] as int?,
+        audioFile: call['audioFile'] as String? ?? '',
+        original: original,
+        corrected: corrected,
+      ));
+      _showMessage(outcome.isSent
+          ? 'Correction submitted'
+          : outcome.isQueued
+              ? 'Correction saved. It will be sent when the server can be '
+                  'reached.'
+              : "Correction not accepted: ${outcome.rejection}");
+    } catch (error) {
+      print('Error saving correction: $error');
+      _showMessage("Couldn't save the correction.");
+    }
   }
 
   Widget _buildCallCard(Map<String, dynamic> call) {
@@ -347,6 +457,7 @@ class _ListenerPageState extends State<ListenerPage>
             )
           : null,
       child: ListTile(
+        onLongPress: () => _showCallActions(call),
         title: Text(
           talkgroupName,
           style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
@@ -548,6 +659,81 @@ class _ListenerPageState extends State<ListenerPage>
                 ],
               ),
             ),
+    );
+  }
+}
+
+/// Edits a call's transcript. Pops the corrected text, or null if cancelled.
+class _CorrectTranscriptDialog extends StatefulWidget {
+  final String original;
+
+  const _CorrectTranscriptDialog({required this.original});
+
+  @override
+  State<_CorrectTranscriptDialog> createState() =>
+      _CorrectTranscriptDialogState();
+}
+
+class _CorrectTranscriptDialogState extends State<_CorrectTranscriptDialog> {
+  late final _text = TextEditingController(text: widget.original);
+
+  @override
+  void initState() {
+    super.initState();
+    _text.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  String get _corrected => _text.text.trim();
+
+  bool get _canSubmit =>
+      _corrected.isNotEmpty && _corrected != widget.original.trim();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Correct Transcript'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.original.isEmpty
+                ? 'This call has no transcript. Write what was said, as '
+                    'closely as you can.'
+                : 'Fix any words the transcript got wrong. Corrections are '
+                    'used to make transcripts more accurate.'),
+            SizedBox(height: 16),
+            TextField(
+              controller: _text,
+              autofocus: true,
+              minLines: 3,
+              maxLines: 8,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                labelText: 'Transcript',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel'),
+        ),
+        TextButton(
+          onPressed:
+              _canSubmit ? () => Navigator.of(context).pop(_corrected) : null,
+          child: Text('Submit'),
+        ),
+      ],
     );
   }
 }
