@@ -96,21 +96,27 @@ String? normalizeIp(String text) {
 class BanList {
   final File file;
   var bans = <Ban>[];
-  DateTime? _modified;
+  // When bans.json was last read, by modification time and size: times are
+  // only to the millisecond, so two quick changes can share one, but adding
+  // or removing a ban always changes the size.
+  (DateTime, int)? _version;
 
   BanList(Directory dir) : file = File('${dir.path}/bans.json');
+
+  (DateTime, int) _currentVersion() =>
+      (file.lastModifiedSync(), file.lengthSync());
 
   void reload() {
     if (!file.existsSync()) {
       bans = [];
-      _modified = null;
+      _version = null;
       return;
     }
-    final modified = file.lastModifiedSync();
-    if (modified == _modified) return;
+    final version = _currentVersion();
+    if (version == _version) return;
     final stored = jsonDecode(file.readAsStringSync()) as List;
     bans = [for (final ban in stored) Ban.fromJson(ban)];
-    _modified = modified;
+    _version = version;
   }
 
   /// Any ban, active or expired, kept for escalation.
@@ -157,6 +163,6 @@ class BanList {
       ).convert([for (final ban in bans) ban.toJson()]),
     );
     temp.renameSync(file.path);
-    _modified = file.lastModifiedSync();
+    _version = _currentVersion();
   }
 }
