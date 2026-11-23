@@ -1,6 +1,8 @@
 import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/notification_settings.dart';
+import 'package:clearcut_mobile/pages/start_page_settings.dart';
 import 'package:clearcut_mobile/services/backup.dart';
+import 'package:clearcut_mobile/services/notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -248,6 +250,43 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _exportAlertRules() async {
+    final rules = context.read<MyAppState>().notifications.rules;
+    if (rules.isEmpty) {
+      _showMessage('You have no alert rules to export.');
+      return;
+    }
+    await _save(
+      _fileName('alert-rules'),
+      exportAlertRules(rules),
+      'Alert rules saved.',
+    );
+  }
+
+  Future<void> _importAlertRules() async {
+    final text = await _open();
+    if (text == null || !mounted) return;
+    final List<AlertRule> rules;
+    try {
+      rules = parseAlertRulesBackup(text);
+    } on BackupException catch (error) {
+      _showMessage(error.message);
+      return;
+    }
+    final notifications = context.read<MyAppState>().notifications;
+    final replace = await _askReplace(
+        'alert rules',
+        _count(rules.length, 'alert rule', 'alert rules'),
+        notifications.rules.isNotEmpty);
+    if (replace == null || !mounted) return;
+    // No address in the backup, so the current relay is left as it is.
+    final added = await notifications
+        .importBackup(NotificationBackup(rules: rules), replace: replace);
+    if (!mounted) return;
+    _showMessage(_importedMessage(
+        'alert rule', 'alert rules', added, rules.length, replace));
+  }
+
   Future<void> _exportFavorites() async {
     final appState = context.read<MyAppState>();
     if (appState.favorites.isEmpty) {
@@ -298,6 +337,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return ListView(
       children: [
+        heading('General'),
+        StartPageSetting(),
+        Divider(height: 32),
         heading('Hidden Systems'),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -383,6 +425,20 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: Text('Load hidden systems, notification server and alert '
               'rules from a file'),
           onTap: _importSettings,
+        ),
+        ListTile(
+          leading: Icon(Icons.file_upload),
+          title: Text('Export Alert Rules'),
+          subtitle: Text('Save just your alert rules to a file, to share them '
+              'or copy them to another phone'),
+          onTap: _exportAlertRules,
+        ),
+        ListTile(
+          leading: Icon(Icons.file_download),
+          title: Text('Import Alert Rules'),
+          subtitle: Text('Load alert rules from a file. Your other settings '
+              'aren\'t changed.'),
+          onTap: _importAlertRules,
         ),
         ListTile(
           leading: Icon(Icons.file_upload),

@@ -8,14 +8,18 @@ import 'package:clearcut_mobile/pages/listener_page.dart';
 import 'package:clearcut_mobile/pages/notification_settings.dart';
 import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/systems_page.dart';
+import 'package:clearcut_mobile/services/audio_files.dart';
 import 'package:clearcut_mobile/services/backup.dart';
 import 'package:clearcut_mobile/services/alert_notifications.dart';
 import 'package:clearcut_mobile/services/call_utils.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
+import 'package:clearcut_mobile/services/start_page.dart';
 import 'package:clearcut_mobile/services/sse_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:clearcut_mobile/services/transcript_corrections.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
@@ -54,6 +58,10 @@ class FakeApi {
   List<List<Map<String, dynamic>>> olderPages = [];
   bool failCalls = false;
   bool failOlderCalls = false;
+  bool audioMissing = false;
+  final correctionRequests = <http.Request>[];
+  int correctionStatus = 200;
+  String correctionError = 'Too many corrections. Try again later.';
   final streams = <StreamController<List<int>>>[];
 
   // A relay at relay.test.
@@ -73,6 +81,21 @@ class FakeApi {
 
   late final client = MockClient.streaming((request, _) async {
     final path = request.url.path;
+    if (request.url.host == 'audio.clearcutradio.app') {
+      return http.StreamedResponse(
+          Stream.value(audioMissing ? <int>[] : [1, 2, 3]),
+          audioMissing ? 404 : 200);
+    }
+    if (request.url.host == 'relay.test' && path == '/v1/corrections') {
+      if (relayDown) throw http.ClientException('Connection refused');
+      final sent = request as http.Request;
+      correctionRequests.add(sent);
+      final body = correctionStatus == 200
+          ? {'ok': true, 'id': 'c${correctionRequests.length}'}
+          : {'error': correctionError};
+      return http.StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode(body))), correctionStatus);
+    }
     if (request.url.host == 'relay.test') {
       if (relayDown) throw http.ClientException('Connection refused');
       relayRequests.add(request as http.Request);
@@ -133,6 +156,18 @@ class FakeBackupFiles implements BackupFiles {
 
   @override
   Future<String?> open() async => toOpen;
+}
+
+class FakeAudioFiles implements AudioFiles {
+  final saved = <String, List<int>>{};
+  final types = <String, String>{};
+
+  @override
+  Future<bool> save(String fileName, Uint8List bytes, String mimeType) async {
+    saved[fileName] = bytes;
+    types[fileName] = mimeType;
+    return true;
+  }
 }
 
 class FakePush implements PushService {
@@ -249,6 +284,160 @@ void main() {
                 ]
               })),
           refusedWith('damaged'));
+    });
+  });
+
+  group('alert rules backup', () {
+    test('rules round trip on their own, and other files say where to go',
+        () {
+      final parsed = parseAlertRulesBackup(exportAlertRules([alertRule()]));
+      expect(parsed.single.name, 'Fires');
+      expect(parsed.single.keywords, ['fire']);
+
+      Matcher refusedWith(String text) => throwsA(isA<BackupException>()
+          .having((e) => e.message, 'message', contains(text)));
+      expect(() => parseAlertRulesBackup(exportSettings(hiddenSystems: [])),
+          refusedWith('Use Import Settings'));
+      expect(() => parseSettingsBackup(exportAlertRules([])),
+          refusedWith('Use Import Alert Rules'));
+      expect(() => parseFavoritesBackup(exportAlertRules([])),
+          refusedWith('Use Import Alert Rules'));
+
+      final damaged = jsonDecode(exportAlertRules([alertRule()]));
+      damaged['rules'][0]['systemId'] = '../x';
+      expect(() => parseAlertRulesBackup(jsonEncode(damaged)),
+          refusedWith('damaged'));
+    });
+  });
+
+  group('start page', () {
+    test('survives a restart', () async {
+      await StartPage.talkgroups('sys', 'Test System',
+          [talkgroup(1, 'Dispatch'), talkgroup(2, 'Fire')]).save();
+      final loaded = await StartPage.load();
+      expect(loaded.kind, StartPageKind.talkgroups);
+      expect(loaded.talkgroups.map((tg) => tg['id']), [1, 2]);
+      expect(loaded.description, 'Dispatch, Fire (Test System)');
+
+      final system =
+          StartPage.fromJson(StartPage.system('sys', 'Test System').toJson());
+      expect(system.kind, StartPageKind.system);
+      expect(system.description, 'Test System');
+    });
+
+    test('a damaged setting opens on Systems', () {
+      for (final bad in [
+        null,
+        'favorites',
+        {'kind': 'nope'},
+        {'kind': 'system', 'systemId': 'a/b'},
+        {'kind': 'talkgroups', 'systemId': 'sys', 'talkgroups': []},
+        {
+          'kind': 'talkgroups',
+          'systemId': 'sys',
+          'talkgroups': [
+            {'id': 'one'}
+          ]
+        },
+      ]) {
+        expect(StartPage.fromJson(bad).kind, StartPageKind.systems,
+            reason: '$bad');
+      }
+    });
+  });
+
+  group('call actions', () {
+    test('downloaded audio keeps its file name and gets a matching type', () {
+      expect(audioFileName('audio/sys/1/123-4.m4a'), '123-4.m4a');
+      expect(audioMimeType('123-4.m4a'), 'audio/mp4');
+      expect(audioMimeType('x.MP3'), 'audio/mpeg');
+      expect(audioMimeType('noextension'), 'application/octet-stream');
+    });
+
+    test('a second correction to a call replaces the first', () async {
+      TranscriptCorrection fix(String id, String text) => TranscriptCorrection(
+            callId: id,
+            systemId: 'sys',
+            talkgroupId: 1,
+            audioFile: 'audio/sys/1/$id.m4a',
+            original: 'old',
+            corrected: text,
+          );
+      await TranscriptCorrections.add(fix('a', 'first'));
+      await TranscriptCorrections.add(fix('b', 'other'));
+      await TranscriptCorrections.add(fix('a', 'second'));
+      final pending = await TranscriptCorrections.pending();
+      expect(pending.map((c) => '${c.callId}:${c.corrected}'),
+          ['b:other', 'a:second']);
+      expect(pending.last.original, 'old');
+      expect(pending.last.talkgroupId, 1);
+    });
+
+    group('sending', () {
+      setUp(() => TranscriptCorrections.url = 'https://relay.test/v1/corrections');
+      tearDown(() => TranscriptCorrections.url = correctionsUrl);
+
+      TranscriptCorrection fix(String id) => TranscriptCorrection(
+            callId: id,
+            systemId: 'sys',
+            talkgroupId: 1,
+            audioFile: 'audio/sys/1/$id.m4a',
+            original: 'old',
+            corrected: 'new $id',
+          );
+
+      test('waits while offline or limited, then goes in order', () async {
+        final api = FakeApi()..relayDown = true;
+        await http.runWithClient(() async {
+          expect((await TranscriptCorrections.submit(fix('a'))).isQueued,
+              isTrue);
+          api
+            ..relayDown = false
+            ..correctionStatus = 429;
+          expect((await TranscriptCorrections.submit(fix('b'))).isQueued,
+              isTrue);
+          // Stopped at the first one, so the second wasn't tried.
+          expect(api.correctionRequests, hasLength(1));
+          expect(await TranscriptCorrections.pending(), hasLength(2));
+
+          api.correctionStatus = 200;
+          await TranscriptCorrections.sendPending();
+          expect(await TranscriptCorrections.pending(), isEmpty);
+          expect(
+              api.correctionRequests
+                  .skip(1)
+                  .map((r) => jsonDecode(r.body)['callId']),
+              ['a', 'b']);
+          // The same install ID every time.
+          expect(
+              api.correctionRequests
+                  .map((r) => jsonDecode(r.body)['installId'])
+                  .toSet(),
+              hasLength(1));
+        }, () => api.client);
+      });
+
+      test('one the relay refuses is dropped with its reason', () async {
+        final api = FakeApi()
+          ..correctionStatus = 400
+          ..correctionError = "Corrections can't contain links.";
+        await http.runWithClient(() async {
+          final outcome = await TranscriptCorrections.submit(fix('a'));
+          expect(outcome.rejection, "Corrections can't contain links.");
+          expect(await TranscriptCorrections.pending(), isEmpty);
+        }, () => api.client);
+      });
+
+      test('nothing is sent until there is somewhere to send it', () async {
+        TranscriptCorrections.url = '';
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          expect((await TranscriptCorrections.submit(fix('a'))).isQueued,
+              isTrue);
+          expect(api.correctionRequests, isEmpty);
+          expect(await TranscriptCorrections.pending(), hasLength(1));
+        }, () => api.client);
+      });
     });
   });
 
@@ -1187,6 +1376,98 @@ void main() {
           await finishMessages(tester);
         }, () => FakeApi().client);
       });
+
+      testWidgets('alert rules export and import on their own',
+          (tester) async {
+        useTallScreen(tester);
+        final files = FakeBackupFiles()
+          ..toOpen = exportAlertRules([alertRule()]);
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage(files: files)));
+          await tester.tap(find.text('Export Alert Rules'));
+          await tester.pumpAndSettle();
+          expect(find.text('You have no alert rules to export.'),
+              findsOneWidget);
+          expect(files.saved, isEmpty);
+
+          await tester.tap(find.text('Import Alert Rules'));
+          await tester.pumpAndSettle();
+          final notifications = stateOf(tester).notifications;
+          expect(notifications.rules.single.name, 'Fires');
+          // The relay isn't part of the file, so it's left alone.
+          expect(notifications.address, isEmpty);
+          expect(find.text('Imported 1 alert rule.'), findsOneWidget);
+
+          await tester.tap(find.text('Export Alert Rules'));
+          await tester.pumpAndSettle();
+          expect(parseAlertRulesBackup(files.saved.values.single).single.name,
+              'Fires');
+
+          await tester.tap(find.text('Import Alert Rules'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(TextButton, 'Add'));
+          await tester.pumpAndSettle();
+          expect(notifications.rules, hasLength(1));
+          expect(find.text('You already had everything in this file.'),
+              findsOneWidget);
+          await finishMessages(tester);
+        }, () => FakeApi().client);
+      });
+
+      testWidgets('a start page chosen in settings opens on launch',
+          (tester) async {
+        useTallScreen(tester);
+        final api = FakeApi();
+        await http.runWithClient(() async {
+          await pumpApp(tester, Scaffold(body: SettingsPage()));
+          expect(find.text('Systems'), findsOneWidget); // The current choice.
+          await tester.tap(find.text('Start Page'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Talkgroups'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Choose from a system...'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Test System'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Fire'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Start on This Talkgroup'));
+          await tester.pumpAndSettle();
+          expect(find.text('Fire (Test System)'), findsOneWidget);
+          await finishMessages(tester);
+
+          // A fresh start opens that stream, with Systems behind it.
+          await tester.pumpWidget(SizedBox());
+          await pumpApp(tester, MySystemsPage(openStartPage: true));
+          expect(find.widgetWithText(AppBar, 'Stream'), findsOneWidget);
+          expect(api.calls.last.url.queryParameters['talkgroup'], '2');
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+          expect(find.widgetWithText(AppBar, 'Systems'), findsOneWidget);
+          await tester.pump(Duration(seconds: 1));
+        }, () => api.client);
+      });
+
+      testWidgets('a favorites start page opens the favorites list',
+          (tester) async {
+        SharedPreferences.setMockInitialValues(
+            {'startPage': jsonEncode(StartPage.favorites.toJson())});
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage(openStartPage: true));
+          expect(find.widgetWithText(AppBar, 'Favorites'), findsOneWidget);
+          expect(find.text('No favorites yet.'), findsOneWidget);
+        }, () => FakeApi().client);
+      });
+
+      testWidgets('without openStartPage, the app stays on Systems',
+          (tester) async {
+        SharedPreferences.setMockInitialValues(
+            {'startPage': jsonEncode(StartPage.favorites.toJson())});
+        await http.runWithClient(() async {
+          await pumpApp(tester, MySystemsPage());
+          expect(find.widgetWithText(AppBar, 'Systems'), findsOneWidget);
+        }, () => FakeApi().client);
+      });
     });
 
     group('notification settings', () {
@@ -1734,6 +2015,108 @@ void main() {
           await tester.pump();
           expect(find.text('Add to Favorites'), findsNothing);
 
+          await leave(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('a long press copies the audio link', (tester) async {
+        final api = FakeApi()
+          ..latestCalls = [call('a', 10, transcript: {'text': 'hello'})];
+        String? copied;
+        final messenger = tester.binding.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform,
+            (methodCall) async {
+          if (methodCall.method == 'Clipboard.setData') {
+            copied = (methodCall.arguments as Map)['text'];
+          }
+          return null;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(
+            SystemChannels.platform, null));
+        await http.runWithClient(() async {
+          await pumpApp(tester,
+              ListenerPage(selectedTalkgroups: selected, currentSystem: 'sys'));
+          await tester.longPress(find.text('hello'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Copy Audio Link'));
+          await tester.pumpAndSettle();
+          expect(copied, 'https://audio.clearcutradio.app/sys/1/a.m4a');
+          expect(find.text('Audio link copied.'), findsOneWidget);
+          await leave(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('a long press downloads the audio to a chosen file',
+          (tester) async {
+        final api = FakeApi()
+          ..latestCalls = [call('a', 10, transcript: {'text': 'hello'})];
+        final files = FakeAudioFiles();
+        await http.runWithClient(() async {
+          await pumpApp(
+              tester,
+              ListenerPage(
+                selectedTalkgroups: selected,
+                currentSystem: 'sys',
+                audioFiles: files,
+              ));
+          await tester.longPress(find.text('hello'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Download Audio'));
+          await tester.pumpAndSettle();
+          expect(files.saved['a.m4a'], [1, 2, 3]);
+          expect(files.types['a.m4a'], 'audio/mp4');
+          expect(find.text('Audio saved.'), findsOneWidget);
+
+          files.saved.clear();
+          api.audioMissing = true;
+          await tester.longPress(find.text('hello'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Download Audio'));
+          await tester.pumpAndSettle();
+          expect(files.saved, isEmpty);
+          expect(find.text("Couldn't download that call's audio."),
+              findsOneWidget);
+          await leave(tester);
+        }, () => api.client);
+      });
+
+      testWidgets('a long press saves a corrected transcript', (tester) async {
+        final api = FakeApi()
+          ..latestCalls = [
+            call('a', 10, transcript: {'text': 'engine for to scene'})
+          ];
+        TranscriptCorrections.url = 'https://relay.test/v1/corrections';
+        addTearDown(() => TranscriptCorrections.url = correctionsUrl);
+        await http.runWithClient(() async {
+          await pumpApp(tester,
+              ListenerPage(selectedTalkgroups: selected, currentSystem: 'sys'));
+          await tester.longPress(find.text('engine for to scene'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Correct Transcript'));
+          await tester.pumpAndSettle();
+
+          // Nothing to submit until the transcript is changed.
+          final submit = find.widgetWithText(TextButton, 'Submit');
+          expect(tester.widget<TextButton>(submit).onPressed, isNull);
+          await tester.enterText(
+              find.byType(TextField).last, 'engine four to scene');
+          await tester.pump();
+          await tester.tap(submit);
+          await tester.pumpAndSettle();
+          expect(find.text('Correction submitted'), findsOneWidget);
+
+          // Sent without an access key, and no longer waiting on the phone.
+          final request = api.correctionRequests.single;
+          expect(request.headers['Authorization'], isNull);
+          final sent = jsonDecode(request.body);
+          expect(sent['installId'], startsWith('i'));
+          expect(sent['callId'], 'a');
+          expect(sent['systemId'], 'sys');
+          expect(sent['talkgroupId'], 1);
+          expect(sent['audioFile'], 'audio/sys/1/a.m4a');
+          expect(sent['originalTranscript'], 'engine for to scene');
+          expect(sent['correctedTranscript'], 'engine four to scene');
+          expect(await TranscriptCorrections.pending(), isEmpty);
           await leave(tester);
         }, () => api.client);
       });

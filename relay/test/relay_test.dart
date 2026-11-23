@@ -606,6 +606,400 @@ void main() {
       expect(push.sent.single.$2['type'], 'test');
     });
   });
+
+  group('corrections', () {
+    late CorrectionLog log;
+    late Handler api;
+
+    Handler apiWith({
+      CorrectionLimits limits = const CorrectionLimits(),
+      String? ipHeader = 'x-real-ip',
+    }) {
+      log = CorrectionLog(dir, limits: limits, now: () => now);
+      return buildApi(relay, corrections: log, clientIpHeader: ipHeader);
+    }
+
+    setUp(() => api = apiWith());
+
+    Map<String, dynamic> correction({
+      String installId = 'install-aaaaaaaaaaaa',
+      String callId = 'call-1',
+      String original = 'engine for to scene',
+      String corrected = 'engine four to scene',
+    }) => {
+      'installId': installId,
+      'appVersion': '2.7.0+1',
+      'callId': callId,
+      'systemId': 'us-ny-monroe',
+      'talkgroupId': 1001,
+      'audioFile': 'audio/us-ny-monroe/1001/1700000000-1.m4a',
+      'originalTranscript': original,
+      'correctedTranscript': corrected,
+      'submittedAt': '2026-11-08T11:59:00.000Z',
+    };
+
+    Future<(int, Map<String, dynamic>, Map<String, String>)> post(
+      Object? body, {
+      String ip = '203.0.113.5',
+      String contentType = 'application/json',
+      Handler? handler,
+    }) async {
+      final response = await (handler ?? api)(
+        Request(
+          'POST',
+          Uri.parse('http://relay/v1/corrections'),
+          headers: {'content-type': contentType, 'x-real-ip': ip},
+          body: body is String ? body : jsonEncode(body),
+        ),
+      );
+      return (
+        response.statusCode,
+        jsonDecode(await response.readAsString()) as Map<String, dynamic>,
+        response.headers,
+      );
+    }
+
+    List<Map<String, dynamic>> logged() => [
+      for (final line in log.file.readAsLinesSync())
+        jsonDecode(line) as Map<String, dynamic>,
+    ];
+
+    test('are taken without a key and logged one per line', () async {
+      final (status, body, _) = await post(correction());
+      expect(status, 200);
+      expect(body['id'], isA<String>());
+      await post(correction(callId: 'call-2', corrected: 'second'));
+
+      final lines = logged();
+      expect(lines, hasLength(2));
+      expect(lines.first, {
+        'id': body['id'],
+        'receivedAt': '2026-11-08T12:00:00.000Z',
+        'installId': 'install-aaaaaaaaaaaa',
+        'ip': '203.0.113.5',
+        'appVersion': '2.7.0+1',
+        'callId': 'call-1',
+        'systemId': 'us-ny-monroe',
+        'talkgroupId': 1001,
+        'audioFile': 'audio/us-ny-monroe/1001/1700000000-1.m4a',
+        'audioUrl':
+            'https://audio.clearcutradio.app/us-ny-monroe/1001/1700000000-1.m4a',
+        'originalTranscript': 'engine for to scene',
+        'correctedTranscript': 'engine four to scene',
+        'submittedAt': '2026-11-08T11:59:00.000Z',
+      });
+      expect(lines.last['correctedTranscript'], 'second');
+      // Other routes still need a key.
+      final status2 = (await api(
+        Request('GET', Uri.parse('http://relay/v1/status')),
+      )).statusCode;
+      expect(status2, 401);
+    });
+
+    test('bad corrections are refused with a reason and not logged', () async {
+      // Enough strikes that this IP isn't banned partway through.
+      api = apiWith(limits: CorrectionLimits(strikesPerDay: 100));
+      Future<String> refusal(Object? body, [int expected = 400]) async {
+        final (status, response, _) = await post(body);
+        expect(status, expected, reason: '$body');
+        return response['error'];
+      }
+
+      expect(await refusal('not json'), contains('valid JSON'));
+      expect(await refusal([1, 2]), contains('JSON object'));
+      expect(
+        await refusal({...correction(), 'installId': 'short'}),
+        contains('installId'),
+      );
+      expect(
+        await refusal({...correction(), 'systemId': '../etc'}),
+        contains('systemId'),
+      );
+      expect(
+        await refusal({...correction(), 'callId': 'a b'}),
+        contains('callId'),
+      );
+      expect(
+        await refusal({...correction(), 'talkgroupId': 'one'}),
+        contains('talkgroupId'),
+      );
+      expect(
+        await refusal({...correction(), 'audioFile': 'audio/../secret'}),
+        contains('audioFile'),
+      );
+      expect(
+        await refusal(correction(corrected: '  engine for to scene ')),
+        contains('same as'),
+      );
+      expect(await refusal(correction(corrected: '   ')), contains('empty'));
+      expect(
+        await refusal(correction(corrected: 'buy at https://spam.example')),
+        contains('links'),
+      );
+      expect(
+        await refusal(correction(corrected: 'bell\u0007')),
+        contains('control'),
+      );
+      expect(
+        await refusal(correction(corrected: 'x' * 4001)),
+        contains('longer'),
+      );
+      expect(
+        await refusal({
+          ...correction(),
+          'padding': 'x' * (maxCorrectionBodyBytes + 1),
+        }),
+        contains('too large'),
+      );
+      final (status, _, _) = await post(
+        jsonEncode(correction()),
+        contentType: 'text/plain',
+      );
+      expect(status, 415);
+      expect(log.file.existsSync(), isFalse);
+    });
+
+    test('each IP is limited, by the configured header only', () async {
+      api = apiWith(limits: CorrectionLimits(perIpPerHour: 2));
+      expect((await post(correction(callId: 'c1'))).$1, 200);
+      // Bad requests count too, so a malformed flood is limited.
+      expect((await post('junk')).$1, 400);
+      final (status, body, headers) = await post(correction(callId: 'c3'));
+      expect(status, 429);
+      expect(body['error'], contains('Too many'));
+      expect(int.parse(headers['retry-after']!), inInclusiveRange(1, 3601));
+
+      expect((await post(correction(), ip: '198.51.100.7')).$1, 200);
+
+      now = now.add(Duration(hours: 1));
+      expect((await post(correction(callId: 'c4'))).$1, 200);
+
+      // Without a configured header, the header is ignored, so a bot can't
+      // dodge the limit by making up addresses.
+      final direct = apiWith(
+        limits: CorrectionLimits(perIpPerHour: 1),
+        ipHeader: null,
+      );
+      expect(
+        (await post(correction(), handler: direct, ip: '1.1.1.1')).$1,
+        200,
+      );
+      expect(
+        (await post(correction(), handler: direct, ip: '2.2.2.2')).$1,
+        429,
+      );
+    });
+
+    test('each install is limited, whatever IP it uses', () async {
+      api = apiWith(limits: CorrectionLimits(perInstallPerDay: 1));
+      expect((await post(correction(), ip: '1.1.1.1')).$1, 200);
+      expect((await post(correction(), ip: '2.2.2.2')).$1, 429);
+      expect(
+        (await post(correction(installId: 'install-bbbbbbbbbbbb'))).$1,
+        200,
+      );
+      expect(logged(), hasLength(2));
+    });
+
+    test('there is a daily limit for everyone, and a size limit', () async {
+      api = apiWith(limits: CorrectionLimits(totalPerDay: 2));
+      expect((await post(correction(), ip: '1.1.1.1')).$1, 200);
+      expect((await post(correction(), ip: '2.2.2.2')).$1, 200);
+      final (status, body, _) = await post(correction(), ip: '3.3.3.3');
+      expect(status, 503);
+      expect(body['error'], contains('too many corrections today'));
+
+      api = apiWith(limits: CorrectionLimits(maxLogBytes: 10));
+      expect((await post(correction(), ip: '4.4.4.4')).$1, 503);
+    });
+
+    test(
+      'a banned install or IP looks accepted but nothing is logged',
+      () async {
+        log.bans.add(
+          Ban(
+            kind: BanKind.install,
+            value: 'install-spammer00000',
+            reason: 'spam',
+            created: now,
+          ),
+        );
+        final (status, body, _) = await post(
+          correction(installId: 'install-spammer00000'),
+        );
+        expect(status, 200);
+        expect(body['ok'], isTrue);
+        expect(body['id'], isA<String>());
+        expect(log.file.existsSync(), isFalse);
+
+        log.bans.add(
+          Ban(
+            kind: BanKind.ip,
+            value: '203.0.113.5',
+            reason: '',
+            created: now,
+            expires: now.add(Duration(days: 1)),
+          ),
+        );
+        expect((await post(correction())).$1, 200);
+        expect(log.file.existsSync(), isFalse);
+        // Other senders are unaffected, and the ban runs out.
+        expect((await post(correction(), ip: '198.51.100.7')).$1, 200);
+        expect(logged(), hasLength(1));
+        now = now.add(Duration(days: 1, minutes: 1));
+        expect((await post(correction(callId: 'c2'))).$1, 200);
+        expect(logged(), hasLength(2));
+      },
+    );
+
+    test('a ban made by the command line applies to a running relay', () async {
+      expect((await post(correction(callId: 'c1'))).$1, 200);
+      // Another BanList on the same folder, as the command-line tool uses.
+      final (kind, value) = parseBanTarget('install-aaaaaaaaaaaa');
+      BanList(dir).add(Ban(kind: kind, value: value, reason: '', created: now));
+      await post(correction(callId: 'c2'));
+      expect(logged().map((c) => c['callId']), ['c1']);
+      expect(BanList(dir).remove(kind, value), isTrue);
+      await post(correction(callId: 'c3'));
+      expect(logged().map((c) => c['callId']), ['c1', 'c3']);
+    });
+
+    test('strikes ban automatically, for longer each time', () async {
+      api = apiWith(limits: CorrectionLimits(strikesPerDay: 3));
+      final spam = correction(corrected: 'see https://spam.example');
+      for (var i = 0; i < 3; i++) {
+        expect((await post(spam)).$1, 400);
+      }
+      // Banned now: looks accepted, and isn't logged even when valid.
+      expect((await post(correction())).$1, 200);
+      expect(log.file.existsSync(), isFalse);
+
+      final ipBan = log.bans.find(BanKind.ip, '203.0.113.5')!;
+      expect(ipBan.automatic, isTrue);
+      expect(ipBan.offenses, 1);
+      expect(ipBan.expires, now.add(Duration(days: 1)));
+      expect(ipBan.reason, contains('links'));
+      final installBan = log.bans.find(
+        BanKind.install,
+        'install-aaaaaaaaaaaa',
+      )!;
+      expect(installBan.expires, now.add(Duration(days: 1)));
+
+      // After the ban, more strikes bring a week, and then for an install,
+      // a ban that never ends. An IP stays at a week.
+      now = now.add(Duration(days: 1, minutes: 1));
+      for (var i = 0; i < 3; i++) {
+        await post(spam);
+      }
+      expect(
+        log.bans.find(BanKind.install, 'install-aaaaaaaaaaaa')!.offenses,
+        2,
+      );
+      expect(
+        log.bans.find(BanKind.install, 'install-aaaaaaaaaaaa')!.expires,
+        now.add(Duration(days: 7)),
+      );
+      now = now.add(Duration(days: 7, minutes: 1));
+      for (var i = 0; i < 3; i++) {
+        await post(spam);
+      }
+      expect(
+        log.bans.find(BanKind.install, 'install-aaaaaaaaaaaa')!.expires,
+        isNull,
+      );
+      expect(
+        log.bans.find(BanKind.ip, '203.0.113.5')!.expires,
+        now.add(Duration(days: 7)),
+      );
+    });
+
+    test('going over the rate limit counts as a strike', () async {
+      api = apiWith(
+        limits: CorrectionLimits(perIpPerHour: 1, strikesPerDay: 2),
+      );
+      await post(correction(callId: 'c1'));
+      expect((await post(correction(callId: 'c2'))).$1, 429);
+      expect(log.bans.find(BanKind.ip, '203.0.113.5'), isNull);
+      expect((await post(correction(callId: 'c3'))).$1, 429);
+      expect(log.bans.find(BanKind.ip, '203.0.113.5')!.automatic, isTrue);
+    });
+
+    test(
+      'purging removes only the banned sender, and senders are counted',
+      () async {
+        await post(correction(callId: 'c1'));
+        await post(
+          correction(callId: 'c2', installId: 'install-bbbbbbbbbbbb'),
+          ip: '2001:db8:1:2:aaaa::1',
+        );
+        await post(correction(callId: 'c3'));
+        await post(
+          correction(callId: 'c4', installId: 'install-cccccccccccc'),
+          ip: '2001:db8:1:2:bbbb::9',
+        );
+        expect(
+          log.senders().map((s) => '${s.installId}:${s.count}:${s.lastIp}'),
+          [
+            'install-aaaaaaaaaaaa:2:203.0.113.5',
+            'install-bbbbbbbbbbbb:1:2001:db8:1:2::/64',
+            'install-cccccccccccc:1:2001:db8:1:2::/64',
+          ],
+        );
+        expect(log.purge(BanKind.install, 'install-aaaaaaaaaaaa'), 2);
+        expect(logged().map((c) => c['callId']), ['c2', 'c4']);
+        // An IPv6 ban covers its /64, and so does purging it.
+        final (kind, value) = parseBanTarget('2001:db8:1:2::1');
+        expect(log.purge(kind, value), 2);
+        expect(logged(), isEmpty);
+      },
+    );
+
+    test('bans name an install ID or an IP, and IPv6 by its /64', () {
+      expect(parseBanTarget('203.0.113.5'), (BanKind.ip, '203.0.113.5'));
+      expect(parseBanTarget('2001:db8:1:2:aaaa::1'), (
+        BanKind.ip,
+        '2001:db8:1:2::/64',
+      ));
+      expect(parseBanTarget('2001:db8:1:2::/64'), (
+        BanKind.ip,
+        '2001:db8:1:2::/64',
+      ));
+      expect(parseBanTarget('iH7dK2pQx9LmZ4vB8nR1sT6w'), (
+        BanKind.install,
+        'iH7dK2pQx9LmZ4vB8nR1sT6w',
+      ));
+      expect(() => parseBanTarget('nope'), throwsFormatException);
+    });
+
+    test('client addresses come from the proxy, and IPv6 by its /64', () {
+      Request from(Map<String, String> headers) =>
+          Request('POST', Uri.parse('http://relay/'), headers: headers);
+      expect(
+        clientIp(
+          from({'x-forwarded-for': '6.6.6.6, 9.9.9.9'}),
+          clientIpHeader: 'x-forwarded-for',
+        ),
+        '9.9.9.9',
+      );
+      expect(
+        clientIp(
+          from({'cf-connecting-ip': '2001:db8:1:2:aaaa::1'}),
+          clientIpHeader: 'cf-connecting-ip',
+        ),
+        clientIp(
+          from({'cf-connecting-ip': '2001:db8:1:2:bbbb::9'}),
+          clientIpHeader: 'cf-connecting-ip',
+        ),
+      );
+      expect(
+        clientIp(
+          from({'cf-connecting-ip': 'not an ip'}),
+          clientIpHeader: 'cf-connecting-ip',
+        ),
+        'unknown',
+      );
+    });
+  });
 }
 
 String keysFileText(RelayStore store) => store.keysFile.readAsStringSync();

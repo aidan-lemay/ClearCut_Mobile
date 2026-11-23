@@ -2,12 +2,19 @@ import 'package:clearcut_mobile/main.dart';
 import 'package:clearcut_mobile/pages/advancedsearch_page.dart';
 import 'package:clearcut_mobile/pages/favorites_page.dart';
 import 'package:clearcut_mobile/pages/info_page.dart';
+import 'package:clearcut_mobile/pages/listener_page.dart';
 import 'package:clearcut_mobile/pages/settings_page.dart';
 import 'package:clearcut_mobile/pages/talkgroups_page.dart';
+import 'package:clearcut_mobile/services/start_page.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class MySystemsPage extends StatefulWidget {
+  /// Whether to open the start page chosen in Settings once it's loaded.
+  final bool openStartPage;
+
+  MySystemsPage({this.openStartPage = false});
+
   @override
   State<MySystemsPage> createState() => _MySystemsPageState();
 }
@@ -15,6 +22,43 @@ class MySystemsPage extends StatefulWidget {
 class _MySystemsPageState extends State<MySystemsPage> {
   var selectedIndex = 0;
   bool showFavorites = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.openStartPage) {
+      final appState = context.read<MyAppState>();
+      appState.startPageLoaded.then((_) {
+        if (mounted) _openStartPage(appState.startPage);
+      });
+    }
+  }
+
+  /// Opens [page] on top of Systems, so Back returns here.
+  void _openStartPage(StartPage page) {
+    switch (page.kind) {
+      case StartPageKind.systems:
+        break;
+      case StartPageKind.favorites:
+        setState(() => selectedIndex = 1);
+      case StartPageKind.system:
+        context
+            .read<MyAppState>()
+            .setCurrent({'id': page.systemId, 'name': page.systemName});
+        Navigator.push(
+            context, MaterialPageRoute(builder: (context) => TalkgroupsPage()));
+      case StartPageKind.talkgroups:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ListenerPage(
+              selectedTalkgroups: page.talkgroups,
+              currentSystem: page.systemId,
+            ),
+          ),
+        );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

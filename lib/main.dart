@@ -3,6 +3,8 @@ import 'package:clearcut_mobile/pages/systems_page.dart';
 import 'package:clearcut_mobile/services/alert_notifications.dart';
 import 'package:clearcut_mobile/services/firebase_push.dart';
 import 'package:clearcut_mobile/services/notifications.dart';
+import 'package:clearcut_mobile/services/start_page.dart';
+import 'package:clearcut_mobile/services/transcript_corrections.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
@@ -15,6 +17,9 @@ const apiTimeout = Duration(seconds: 15);
 
 // A transcribe request may not return until the server has finished the work.
 const transcribeTimeout = Duration(seconds: 90);
+
+// Call audio is small, but allow for a slow mobile connection.
+const audioDownloadTimeout = Duration(seconds: 60);
 
 /* Clearcut API Paths:
 Audio: https://audio.clearcutradio.app/audio/[SYSTEM NAME]/[TGID]/[FILE NAME]
@@ -39,10 +44,10 @@ Future<void> main() async {
   } catch (error) {
     print('Error setting up notifications: $error');
   }
-  runApp(MyApp(push: push));
-
-  // Opened by tapping a notification while the app wasn't running.
+  // Opened by tapping a notification while the app wasn't running. That call
+  // is shown instead of the start page.
   final target = await launchAlertTarget().catchError((_) => null);
+  runApp(MyApp(push: push, openStartPage: target == null));
   if (target != null) {
     WidgetsBinding.instance
         .addPostFrameCallback((_) => openAlertTarget(target));
@@ -66,7 +71,13 @@ void openAlertTarget(AlertTarget target) {
 class MyApp extends StatelessWidget {
   final PushService push;
 
-  const MyApp({super.key, this.push = const NoPushService()});
+  /// Whether to open the start page chosen in Settings, on top of Systems.
+  final bool openStartPage;
+
+  const MyApp(
+      {super.key,
+      this.push = const NoPushService(),
+      this.openStartPage = true});
 
   @override
   Widget build(BuildContext context) {
@@ -90,7 +101,7 @@ class MyApp extends StatelessWidget {
           ),
           textTheme: ThemeData.dark().textTheme,
         ),
-        home: MySystemsPage(),
+        home: MySystemsPage(openStartPage: openStartPage),
       ),
     );
   }
@@ -121,6 +132,26 @@ class MyAppState extends ChangeNotifier {
     loadFavorites();
     loadHiddenSystems();
     notifications.load();
+    // Corrections made offline, or while the relay was busy, go now.
+    TranscriptCorrections.sendPending().catchError((Object error) {
+      print('Error sending corrections: $error');
+      return <String, SendOutcome>{};
+    });
+    startPageLoaded = StartPage.load().then((loaded) {
+      startPage = loaded;
+      notifyListeners();
+    });
+  }
+
+  /// The page the app opens on. [startPageLoaded] completes once it's been
+  /// read from storage.
+  StartPage startPage = StartPage.systems;
+  late final Future<void> startPageLoaded;
+
+  void setStartPage(StartPage page) {
+    startPage = page;
+    page.save();
+    notifyListeners();
   }
 
   @override
