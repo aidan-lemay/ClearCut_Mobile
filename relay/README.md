@@ -175,6 +175,125 @@ To run the relay alongside other services instead of with its own `docker-compos
 
 The build context must be the repository root, because the image also includes `packages/clearcut_core`. Stop the relay's own Compose setup first (`docker compose down` in `relay/`), so two relays don't share the data folder. Update with `git pull`, then `docker compose up -d --build clearcut-relay`.
 
+## Transcript corrections
+
+When someone corrects a call's transcript in the app, it's sent to `POST /v1/corrections` here, for retraining transcription later. Unlike everything else on the relay, this needs no access key: anyone with the app can send corrections. They're written to `data/corrections.jsonl`.
+
+### The file
+
+[JSON Lines](https://jsonlines.org): one JSON object per line, oldest first, with every field on every line. Each line is one correction:
+
+```json
+{"id":"q3V9x0aB4kL2mN8p","receivedAt":"2026-11-23T18:04:11.402Z","installId":"iX2c...","ip":"203.0.113.5","appVersion":null,"callId":"6740f1...","systemId":"us-ny-monroe","talkgroupId":1001,"audioFile":"audio/us-ny-monroe/1001/1700000000-1.m4a","audioUrl":"https://audio.clearcutradio.app/us-ny-monroe/1001/1700000000-1.m4a","originalTranscript":"engine for to scene","correctedTranscript":"engine four to scene","submittedAt":"2026-11-23T18:04:09.118Z"}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Made by the relay, unique to this line. |
+| `receivedAt` | When the relay got it, UTC. |
+| `installId` | A random ID the app makes when it's installed. It identifies one install of the app, not a person or phone, and isn't linked to access keys. |
+| `ip` | The address it was sent from, as the relay limits and bans it: IPv4 as is, IPv6 as its /64, such as `2001:db8:1:2::/64`. Behind a proxy, this is only the real sender's address if `RELAY_CLIENT_IP_HEADER` is set. |
+| `appVersion` | Reserved for the app's version; currently always `null`. |
+| `callId`, `systemId`, `talkgroupId` | The call, as Clearcut identifies it. |
+| `audioFile`, `audioUrl` | The call's audio, as Clearcut's path and as a full URL. May be `null`. |
+| `originalTranscript` | Clearcut's transcript when the correction was made. Empty if there wasn't one. |
+| `correctedTranscript` | The person's correction. |
+| `submittedAt` | When the person made the correction, by the phone's clock. Sent later if the phone was offline. |
+
+If the same install corrects a call twice, both lines are kept; use the later one. To read it in Python:
+
+```python
+import json
+with open("corrections.jsonl") as f:
+    corrections = [json.loads(line) for line in f]
+```
+
+To hand over a batch, copy the file and then empty it, so the next batch starts fresh:
+
+```sh
+cp data/corrections.jsonl corrections-$(date +%F).jsonl && : > data/corrections.jsonl
+```
+
+### Limits and filtering
+
+Because this endpoint is public, it assumes a sender may be a bot:
+
+- **Rate limits:** each IP address can send 30 corrections an hour, each install 200 a day, and everyone together 5,000 a day. IPv6 addresses are limited by their /64 network, so one phone can't dodge the limit by changing address. Requests over a limit get `429`, or `503` for the daily total, with `Retry-After`. Malformed requests count against the IP limit too, so a flood of junk is limited the same way. The app keeps corrections that were turned away and sends them later.
+- **Filtering:** requests must be JSON and under 16 KB. Every field is checked: IDs must look like Clearcut IDs, transcripts must be under 4,000 characters, a correction must differ from the original, and control characters and web links are refused.
+- **Disk:** once `corrections.jsonl` reaches 200 MB, new corrections are refused until it's emptied.
+- **Browsers:** the relay sends no CORS headers and requires a JSON content type, so a web page can't make its visitors' browsers send corrections.
+- **Logs:** refusals are logged once per sender per hour, so a flood can't fill the relay's logs either.
+
+### Strikes and bans
+
+Senders can be banned by install ID or IP address, by you or automatically. **Banned senders aren't told:** their corrections get the usual success reply but aren't logged, so a bot keeps using an ID you're already ignoring instead of making a new one.
+
+**Automatic bans.** Each refused request is a strike against the sender's IP address, and against its install ID if the request had one. A request is refused for invalid data, a link, being too large or not JSON, or going over a rate limit. 10 strikes in a day (`RELAY_CORRECTIONS_STRIKES`) bans the sender:
+
+| Automatic ban | Install ID | IP address |
+| --- | --- | --- |
+| First | 1 day | 1 day |
+| Second | 7 days | 7 days |
+| Third and later | For good | 7 days |
+
+IP addresses are never banned for good automatically, because a phone carrier can put many people behind one address. The app itself never sends invalid corrections, so real users are very unlikely to collect strikes. Each automatic ban is logged, like `Banned install iH7dK2pQ… for 1 day after 10 refused requests (last: Corrections can't contain links.)`.
+
+**Banning by hand:**
+
+```sh
+docker compose exec relay relay corrections senders             # installs by how many corrections they've sent
+docker compose exec relay relay corrections ban <install ID> --reason "spam" --purge
+docker compose exec relay relay corrections ban 203.0.113.5 --days 7
+docker compose exec relay relay corrections bans                # every ban, automatic and manual
+docker compose exec relay relay corrections unban <install ID or IP>
+```
+
+- `--purge` also deletes the corrections that install or IP address already sent.
+- `--days` ends the ban after that many days; without it, the ban lasts for good.
+- IPv6 addresses are banned by their /64, as they're limited.
+- Bans apply to the running relay at once and are kept in `data/bans.json`.
+- `unban` also forgets the sender's history, so a later automatic ban starts at 1 day again.
+
+`senders` shows the IP address each install last sent from. Requests that were refused aren't in `corrections.jsonl`, so for those, look in `docker compose logs relay` for lines like `Corrections rate limited for IP 203.0.113.5`.
+
+### Settings
+
+Change the limits with these environment variables, in `docker-compose.yml` under `environment:`:
+
+| Variable | Default |
+| --- | --- |
+| `RELAY_CORRECTIONS_PER_IP_PER_HOUR` | `30` |
+| `RELAY_CORRECTIONS_PER_INSTALL_PER_DAY` | `200` |
+| `RELAY_CORRECTIONS_PER_DAY` | `5000` |
+| `RELAY_CORRECTIONS_MAX_MB` | `200` |
+| `RELAY_CORRECTIONS_STRIKES` | `10` refused requests a day before an automatic ban |
+| `RELAY_CORRECTIONS` | Set to `off` to turn corrections off. |
+
+Rate limits and strike counts are kept in memory, so restarting the relay resets them. Bans are kept on disk and aren't reset.
+
+### Behind a proxy or tunnel: set `RELAY_CLIENT_IP_HEADER`
+
+Behind Cloudflare, nginx or Caddy, every request reaches the relay from the proxy's address, so without this setting **everyone shares one IP limit**. Tell the relay which header holds the sender's real address:
+
+| In front of the relay | Set `RELAY_CLIENT_IP_HEADER` to |
+| --- | --- |
+| Cloudflare Tunnel | `CF-Connecting-IP` |
+| nginx, with the config above | `X-Real-IP` |
+| Caddy | `X-Forwarded-For` |
+
+```yaml
+services:
+  relay:
+    environment:
+      RELAY_CLIENT_IP_HEADER: CF-Connecting-IP
+```
+
+Only set this when the relay can't be reached except through that proxy. Anyone can send these headers, so if the relay's port is also open directly, a bot could make up an address for every request. With the Compose setups above, keep the port on `127.0.0.1` or use `expose` instead of `ports`. When the header isn't set, the relay says so in its log at startup.
+
+### Extra protection with Cloudflare
+
+If the relay is behind Cloudflare, a rate limiting rule there stops floods before they reach your server. Under **Security > WAF > Rate limiting rules**, add a rule matching **URI Path equals `/v1/corrections`**, counting by IP, for example 20 requests per minute, with action **Block**. The free plan includes one such rule.
+
 ## Updating and backups
 
 ```sh
@@ -182,12 +301,13 @@ git pull
 docker compose up -d --build
 ```
 
-Everything the relay keeps is in `relay/data`: `keys.json`, `devices.json` and the Firebase key. Back up that folder to keep keys and registered phones. If `devices.json` is lost, phones re-register the next time their notification settings change or the app restarts.
+Everything the relay keeps is in `relay/data`: `keys.json`, `devices.json`, `corrections.jsonl`, `bans.json` and the Firebase key. Back up that folder to keep keys and registered phones. If `devices.json` is lost, phones re-register the next time their notification settings change or the app restarts.
 
 ## Security
 
 - **Access keys** are 256-bit random values. The relay stores only their SHA-256 hashes, so `keys.json` doesn't give anyone access. Each phone stays tied to the key it registered with, so one person can't change or remove another person's phone.
 - **Limits:** a key can register up to 10 phones (`RELAY_MAX_DEVICES_PER_KEY`), each with up to 50 rules covering up to 10 systems. Requests over 512 KB are refused. These stop a leaked key from making the relay open unlimited Clearcut connections. If a key leaks, revoke it.
+- **Transcript corrections** are the one thing that needs no key. See [Limits and filtering](#limits-and-filtering) and [Strikes and bans](#strikes-and-bans) for how they're protected, and set `RELAY_CLIENT_IP_HEADER` behind a proxy.
 - **The Firebase service account key** can send notifications to every phone with the app. Keep it only in `relay/data`, and restrict the folder: `chmod 700 relay/data`.
 - **HTTPS:** the relay serves plain HTTP, so put HTTPS in front of it (see [Reaching the relay](#reaching-the-relay)) for anything beyond your home network.
 - **Logs** include phone IDs, key names, and the start of push tokens, but never access keys.

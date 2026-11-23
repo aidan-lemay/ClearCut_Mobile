@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+import 'bans.dart';
+import 'corrections.dart';
 import 'push.dart';
 import 'relay.dart';
 import 'rules.dart';
@@ -25,10 +28,14 @@ Response _error(int status, String message) =>
 
 ApiKey _keyOf(Request request) => request.context['key'] as ApiKey;
 
-/// Requires `Authorization: Bearer <key>` on everything except /healthz.
+/// Paths anyone can use, without an access key.
+const _publicPaths = {'healthz', 'v1/corrections'};
+
+/// Requires `Authorization: Bearer <key>` on everything except
+/// [_publicPaths].
 Middleware _authenticate(RelayStore store) =>
     (inner) => (request) {
-      if (request.url.path == 'healthz') return inner(request);
+      if (_publicPaths.contains(request.url.path)) return inner(request);
       final header = request.headers['authorization'] ?? '';
       final secret = header.startsWith('Bearer ')
           ? header.substring(7).trim()
@@ -52,15 +59,18 @@ Middleware _handleErrors() =>
       }
     };
 
-Future<Object?> _readJson(Request request) async {
+Future<Object?> _readJson(
+  Request request, {
+  int maxBytes = _maxBodyBytes,
+}) async {
   final length = request.contentLength;
-  if (length != null && length > _maxBodyBytes) {
+  if (length != null && length > maxBytes) {
     throw FormatException('The request is too large.');
   }
   final bytes = <int>[];
   await for (final chunk in request.read()) {
     bytes.addAll(chunk);
-    if (bytes.length > _maxBodyBytes) {
+    if (bytes.length > maxBytes) {
       throw FormatException('The request is too large.');
     }
   }
@@ -84,12 +94,58 @@ Future<Object?> _readJson(Request request) async {
   return (device, null);
 }
 
+/// The address a request came from, for rate limiting.
+///
+/// Behind a proxy or tunnel every request comes from the proxy, so
+/// [clientIpHeader] names the header it puts the real address in, such as
+/// `CF-Connecting-IP` for Cloudflare or `X-Real-IP` for nginx. The header is
+/// only trusted when configured, since anyone can send it. For
+/// `X-Forwarded-For`, the last address is used: the one the proxy saw.
+///
+/// IPv6 addresses are limited by their /64 network, since one home or phone
+/// is usually given a whole /64 and can pick any address in it.
+String clientIp(Request request, {String? clientIpHeader}) {
+  String? text;
+  if (clientIpHeader != null) {
+    text = request.headers[clientIpHeader]?.split(',').last.trim();
+  }
+  if (text == null || text.isEmpty) {
+    final info = request.context['shelf.io.connection_info'];
+    text = info is HttpConnectionInfo ? info.remoteAddress.address : 'unknown';
+  }
+  return normalizeIp(text) ?? 'unknown';
+}
+
+Response _refused(CorrectionLog log, Refusal refusal) {
+  final seconds = log.retryAfter(refusal).inSeconds + 1;
+  final response = switch (refusal) {
+    Refusal.full => _error(
+      503,
+      'The relay isn\'t taking corrections right now.',
+    ),
+    Refusal.overall => _error(
+      503,
+      'The relay has had too many corrections today. Try again later.',
+    ),
+    _ => _error(429, 'Too many corrections. Try again later.'),
+  };
+  return response.change(headers: {'Retry-After': '$seconds'});
+}
+
 /// The latest pause end accepted, so a bad value can't overflow a date.
 const _maxPausedUntil = 4102444800; // 2100-01-01
 
 /// [maxDevicesPerKey] limits how many phones one key can register, so a
 /// leaked key can't be used to open unlimited Clearcut connections.
-Handler buildApi(Relay relay, {int maxDevicesPerKey = 10}) {
+///
+/// [corrections] takes transcript corrections from anyone with the app; see
+/// [clientIp] for [clientIpHeader].
+Handler buildApi(
+  Relay relay, {
+  int maxDevicesPerKey = 10,
+  CorrectionLog? corrections,
+  String? clientIpHeader,
+}) {
   final router = Router();
 
   router.get('/healthz', (Request request) => _json(200, {'ok': true}));
@@ -228,6 +284,72 @@ Handler buildApi(Relay relay, {int maxDevicesPerKey = 10}) {
       ),
       PushResult.failed => _error(502, 'Firebase didn\'t accept the push.'),
     };
+  });
+
+  // Public, so the cheap limits run before the body is even read. No CORS
+  // headers are sent, and a JSON content type is required, so a web page
+  // can't make its visitors' browsers send corrections.
+  router.post('/v1/corrections', (Request request) async {
+    final log = corrections;
+    if (log == null) return _error(404, 'Not found.');
+    final ip = clientIp(request, clientIpHeader: clientIpHeader);
+    final refusal = log.admit(ip);
+    if (refusal == Refusal.ip) {
+      log.strike(BanKind.ip, ip, 'over the rate limit');
+    }
+    if (refusal != null) return _refused(log, refusal);
+    log.countRequest(ip);
+
+    // Banned senders are answered as if accepted, so a bot doesn't know to
+    // switch to a new ID or address.
+    Response pretendAccepted() =>
+        _json(200, {'ok': true, 'id': newCorrectionId()});
+    if (log.isBanned(BanKind.ip, ip)) return pretendAccepted();
+
+    if (request.mimeType != 'application/json') {
+      log.strike(BanKind.ip, ip, 'not JSON');
+      return _error(415, 'Send corrections as application/json.');
+    }
+    final Object? body;
+    try {
+      body = await _readJson(request, maxBytes: maxCorrectionBodyBytes);
+    } on FormatException catch (error) {
+      log.strike(BanKind.ip, ip, error.message);
+      return _error(400, error.message);
+    }
+    // Known before the rest is checked, so a banned install is dropped
+    // without a strike, and a bad correction counts against its install.
+    final installId = body is Map ? body['installId'] : null;
+    final knownInstall = installId is String && isValidInstallId(installId)
+        ? installId
+        : null;
+    if (knownInstall != null && log.isBanned(BanKind.install, knownInstall)) {
+      return pretendAccepted();
+    }
+
+    final Correction correction;
+    try {
+      correction = parseCorrection(
+        body,
+        id: newCorrectionId(),
+        receivedAt: relay.now(),
+        ip: ip,
+      );
+    } on FormatException catch (error) {
+      log.strike(BanKind.ip, ip, error.message);
+      if (knownInstall != null) {
+        log.strike(BanKind.install, knownInstall, error.message);
+      }
+      return _error(400, error.message);
+    }
+    final installRefusal = log.admitInstall(correction.installId);
+    if (installRefusal != null) {
+      log.strike(BanKind.install, correction.installId, 'over the rate limit');
+      return _refused(log, installRefusal);
+    }
+
+    log.write(correction);
+    return _json(200, {'ok': true, 'id': correction.id});
   });
 
   return Pipeline()
